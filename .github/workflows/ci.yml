@@ -7,7 +7,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -59,3 +59,37 @@ jobs:
           name: coverage-report
           path: coverage/
           if-no-files-found: error
+
+      - name: Publish coverage badge data
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          publish_dir="$(mktemp -d)"
+          trap 'rm -rf "$publish_dir"' EXIT
+
+          git init "$publish_dir" >/dev/null
+          cd "$publish_dir"
+          git checkout -b gh-pages >/dev/null
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          if git fetch --depth 1 origin gh-pages >/dev/null 2>&1; then
+            git reset --hard FETCH_HEAD >/dev/null
+          fi
+
+          mkdir -p coverage
+          cp "${GITHUB_WORKSPACE}/coverage/coverage-badge.json" coverage/coverage-badge.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage/coverage-badge.json
+
+          if git diff --cached --quiet; then
+            echo "coverage badge is already up to date"
+            exit 0
+          fi
+
+          git commit -m "chore: update coverage badge"
+          git push origin HEAD:gh-pages

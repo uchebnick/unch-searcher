@@ -2,6 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/uchebnick/unch-searcher?display_name=tag)](https://github.com/uchebnick/unch-searcher/releases/latest)
 [![Homebrew Tap](https://img.shields.io/badge/Homebrew-uchebnick%2Ftap-FBB040?logo=homebrew&logoColor=white)](https://github.com/uchebnick/homebrew-tap)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/uchebnick/unch-searcher/gh-pages/coverage/coverage-badge.json)](https://github.com/uchebnick/unch-searcher/actions/workflows/ci.yml)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](#build-from-source)
 [![SQLite vec](https://img.shields.io/badge/SQLite-sqlite--vec-003B57?logo=sqlite&logoColor=white)](#how-it-works)
 [![Local First](https://img.shields.io/badge/Local-first-2DA44E)](#storage-layout)
