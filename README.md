@@ -16,9 +16,18 @@ Local-first CLI for semantic code search over explicit repository annotations.
 ### Homebrew
 
 ```bash
-brew tap uchebnick/tap
-brew install unch
+brew install uchebnick/tap/unch
 ```
+
+If Homebrew complains about outdated Xcode on macOS, update Xcode Command Line Tools first:
+
+```bash
+softwareupdate --list
+softwareupdate --install "Command Line Tools for Xcode 26.4-26.4"
+sudo xcode-select --switch /Library/Developer/CommandLineTools
+```
+
+If Homebrew still complains about an outdated `Xcode.app`, update the full Xcode app from the App Store as well, or remove the stale app if you only want Command Line Tools.
 
 ### Manual download
 
