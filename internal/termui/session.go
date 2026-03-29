@@ -1,4 +1,4 @@
-package internal
+package termui
 
 import (
 	"fmt"
@@ -13,7 +13,7 @@ import (
 	getter "github.com/hashicorp/go-getter"
 )
 
-type cliSession struct {
+type Session struct {
 	log     *log.Logger
 	logFile *os.File
 	logPath string
@@ -21,7 +21,7 @@ type cliSession struct {
 	ui      *terminalUI
 }
 
-func newCLISession(localDir string) (*cliSession, error) {
+func NewSession(localDir string) (*Session, error) {
 	logsDir := filepath.Join(localDir, "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create logs dir: %w", err)
@@ -33,18 +33,18 @@ func newCLISession(localDir string) (*cliSession, error) {
 		return nil, fmt.Errorf("open log file: %w", err)
 	}
 
-	session := &cliSession{
+	s := &Session{
 		log:     log.New(logFile, "", log.LstdFlags|log.Lmicroseconds),
 		logFile: logFile,
 		logPath: logPath,
 		started: time.Now(),
 		ui:      newTerminalUI(os.Stderr),
 	}
-	session.Logf("session started")
-	return session, nil
+	s.Logf("session started")
+	return s, nil
 }
 
-func (s *cliSession) Close() error {
+func (s *Session) Close() error {
 	if s == nil {
 		return nil
 	}
@@ -58,13 +58,13 @@ func (s *cliSession) Close() error {
 	return nil
 }
 
-func (s *cliSession) Logf(format string, args ...any) {
+func (s *Session) Logf(format string, args ...any) {
 	if s != nil && s.log != nil {
 		s.log.Printf(format, args...)
 	}
 }
 
-func (s *cliSession) ProgressTracker(label string) getter.ProgressTracker {
+func (s *Session) ProgressTracker(label string) getter.ProgressTracker {
 	return &uiProgressTracker{
 		label: label,
 		ui:    s.ui,
@@ -72,12 +72,20 @@ func (s *cliSession) ProgressTracker(label string) getter.ProgressTracker {
 	}
 }
 
-func (s *cliSession) CountProgress(label string, current, total int) {
+func (s *Session) CountProgress(label string, current, total int) {
 	s.ui.Status(formatCountProgress(label, int64(current), int64(total)))
 }
 
-func (s *cliSession) Finish(message string) {
+func (s *Session) Finish(message string) {
 	s.ui.Finish(message)
+}
+
+func (s *Session) Status(message string) {
+	s.ui.Status(message)
+}
+
+func (s *Session) Clear() {
+	s.ui.Clear()
 }
 
 type terminalUI struct {

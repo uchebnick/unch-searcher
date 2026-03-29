@@ -1,6 +1,6 @@
-package internal
+package runtime
 
-// @filectx: yzma runtime library resolution and auto-install for llama shared libraries used by embeddings.
+// @filectx: yzma runtime resolver that validates local shared libraries or downloads a managed llama runtime into .semsearch.
 
 import (
 	"context"
@@ -12,22 +12,21 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/hybridgroup/yzma/pkg/download"
-	"github.com/jupiterrider/ffi"
 )
 
 const llamaBuilderReleasesAPI = "https://api.github.com/repos/hybridgroup/llama-cpp-builder/releases?per_page=10"
 
-// @search: if --lib is not provided, yzma libraries are resolved from YZMA_LIB, local .semsearch/yzma, or downloaded automatically from llama-cpp-builder releases.
-// @search: yzma runtime downloads go into a local managed directory under .semsearch/yzma rather than the global model cache.
-func resolveOrInstallYzmaLibPath(ctx context.Context, requestedPath string, localDir string, session *cliSession) (string, string, error) {
+type YzmaResolver struct{}
+
+// @search: ResolveOrInstallYzmaLibPath uses YZMA_LIB, local .semsearch runtime libraries, or auto-downloads llama shared libraries when --lib is omitted.
+func (YzmaResolver) ResolveOrInstallYzmaLibPath(ctx context.Context, requestedPath string, localDir string, reporter Reporter) (string, string, error) {
 	requestedPath = strings.TrimSpace(requestedPath)
 	if requestedPath != "" {
-		return resolveYzmaLibPath(requestedPath)
+		return ResolveYzmaLibPath(requestedPath)
 	}
 
 	if envPath := strings.TrimSpace(os.Getenv("YZMA_LIB")); envPath != "" {
@@ -42,7 +41,7 @@ func resolveOrInstallYzmaLibPath(ctx context.Context, requestedPath string, loca
 		return resolved, fmt.Sprintf("using local yzma libs from %s", resolved), nil
 	}
 
-	if err := downloadYzmaLibraries(ctx, installRoot, session); err != nil {
+	if err := downloadYzmaLibraries(ctx, installRoot, reporter); err != nil {
 		for _, candidate := range commonYzmaLibDirs() {
 			if resolved, ok := validateYzmaLibDir(candidate); ok {
 				return resolved, fmt.Sprintf("warning: automatic yzma install failed (%v); using %s", err, resolved), nil
@@ -62,7 +61,7 @@ func resolveOrInstallYzmaLibPath(ctx context.Context, requestedPath string, loca
 	)
 }
 
-func resolveYzmaLibPath(input string) (string, string, error) {
+func ResolveYzmaLibPath(input string) (string, string, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return "", "", fmt.Errorf("empty yzma lib path")
@@ -97,7 +96,7 @@ func resolveYzmaLibPath(input string) (string, string, error) {
 	)
 }
 
-func downloadYzmaLibraries(ctx context.Context, installRoot string, session *cliSession) error {
+func downloadYzmaLibraries(ctx context.Context, installRoot string, reporter Reporter) error {
 	parentDir := filepath.Dir(installRoot)
 	if err := os.MkdirAll(parentDir, 0o755); err != nil {
 		return fmt.Errorf("create yzma install parent dir: %w", err)
@@ -116,31 +115,31 @@ func downloadYzmaLibraries(ctx context.Context, installRoot string, session *cli
 			return fmt.Errorf("create yzma staging dir: %w", err)
 		}
 
-		if session != nil {
-			session.Logf("downloading yzma libs: dst=%s os=%s arch=%s processor=%s version=%s", stageRoot, runtime.GOOS, runtime.GOARCH, processor, version)
+		if reporter != nil {
+			reporter.Logf("downloading yzma libs: dst=%s os=%s arch=%s processor=%s version=%s", stageRoot, runtime.GOOS, runtime.GOARCH, processor, version)
 		}
 
 		progress := download.ProgressTracker
-		if session != nil {
-			progress = session.ProgressTracker("Downloading runtime")
+		if reporter != nil {
+			progress = reporter.ProgressTracker("Downloading runtime")
 		}
 
 		err = download.GetWithContext(ctx, runtime.GOARCH, runtime.GOOS, processor, version, stageRoot, progress)
 		if err == nil {
 			if _, ok := detectedYzmaLibDir(stageRoot); !ok {
-				os.RemoveAll(stageRoot)
+				_ = os.RemoveAll(stageRoot)
 				lastErr = fmt.Errorf("downloaded files for %s, but required libraries were not found", version)
 				continue
 			}
 
 			if err := replaceManagedDir(stageRoot, installRoot); err != nil {
-				os.RemoveAll(stageRoot)
+				_ = os.RemoveAll(stageRoot)
 				return fmt.Errorf("activate yzma install: %w", err)
 			}
 			return nil
 		}
 
-		os.RemoveAll(stageRoot)
+		_ = os.RemoveAll(stageRoot)
 		if errors.Is(err, download.ErrFileNotFound) {
 			lastErr = err
 			continue
@@ -175,7 +174,6 @@ func defaultYzmaProcessor() string {
 	}
 }
 
-// @search: validateYzmaLibDir checks for the platform-specific required libggml, libggml-base, and libllama shared libraries.
 func validateYzmaLibDir(path string) (string, bool) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -251,7 +249,7 @@ func commonYzmaLibDirs() []string {
 	}
 }
 
-func ensureDynamicLibraryLookupPath(libDir string) error {
+func EnsureDynamicLibraryLookupPath(libDir string) error {
 	libDir = strings.TrimSpace(libDir)
 	if libDir == "" {
 		return nil
@@ -384,65 +382,4 @@ func recentLlamaVersions(ctx context.Context) ([]string, error) {
 	}
 
 	return versions, nil
-}
-
-var preloadedYzmaLibs []ffi.Lib
-
-func preloadYzmaSharedLibraries(libDir string) error {
-	if runtime.GOOS != "darwin" {
-		return nil
-	}
-
-	filenames, err := darwinPreloadLibraryNames(libDir)
-	if err != nil {
-		return err
-	}
-
-	for _, name := range filenames {
-		lib, err := ffi.Load(filepath.Join(libDir, name))
-		if err != nil {
-			return fmt.Errorf("preload %s: %w", name, err)
-		}
-		preloadedYzmaLibs = append(preloadedYzmaLibs, lib)
-	}
-
-	return nil
-}
-
-func darwinPreloadLibraryNames(libDir string) ([]string, error) {
-	entries, err := os.ReadDir(libDir)
-	if err != nil {
-		return nil, fmt.Errorf("read yzma lib dir: %w", err)
-	}
-
-	var names []string
-	add := func(name string) {
-		if _, err := os.Stat(filepath.Join(libDir, name)); err == nil {
-			names = append(names, name)
-		}
-	}
-
-	add("libggml-base.dylib")
-
-	var optional []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() {
-			continue
-		}
-		if !strings.HasPrefix(name, "libggml-") || !strings.HasSuffix(name, ".dylib") {
-			continue
-		}
-		if name == "libggml-base.dylib" {
-			continue
-		}
-		optional = append(optional, name)
-	}
-	sort.Strings(optional)
-	names = append(names, optional...)
-
-	add("libggml.dylib")
-	add("libllama.dylib")
-
-	return names, nil
 }

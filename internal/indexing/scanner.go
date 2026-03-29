@@ -1,11 +1,10 @@
-package internal
+package indexing
 
-// @filectx: File walker and marker extractor for semantic indexing comments inside repository files.
+// @filectx: Filesystem scanner that skips runtime state, extracts @search and @filectx directives, and reads result text from source files.
 
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -15,67 +14,29 @@ import (
 	ignore "github.com/sabhiram/go-gitignore"
 )
 
-type IndexedComment struct {
-	Line          int
-	Text          string
-	FollowingText string
-}
+type FileScanner struct{}
 
-type Indexer struct {
-	embedder *Embedder
-	repo     *Repository
-}
-
-// @search: IndexDirectory and collectJobs use the same skip rules and comment extraction behavior.
-func NewIndexer(embedder *Embedder, repo *Repository) *Indexer {
-	return &Indexer{
-		embedder: embedder,
-		repo:     repo,
-	}
-}
-
-func (i *Indexer) IndexDirectory(
-	ctx context.Context,
-	root string,
-	contextPrefix string,
-	commentPrefix string,
-	excludePatterns []string,
-	gitignorePath ...string,
-) error {
-	root = filepath.Clean(root)
-
-	resolvedGitignorePath, err := resolveGitignorePath(root, gitignorePath...)
+// @search: CollectJobs walks the repository with .gitignore support, skips .git and .semsearch, and returns only files with indexable directives.
+func (FileScanner) CollectJobs(root string, gitignorePath string, extraPatterns []string, commentPrefix string, contextPrefix string) ([]FileJob, int, error) {
+	matcher, err := buildIgnoreMatcher(gitignorePath, extraPatterns)
 	if err != nil {
-		return fmt.Errorf("resolve gitignore path: %w", err)
+		return nil, 0, fmt.Errorf("build ignore matcher: %w", err)
 	}
 
-	matcher, err := buildIgnoreMatcher(resolvedGitignorePath, excludePatterns)
-	if err != nil {
-		return fmt.Errorf("build ignore matcher: %w", err)
-	}
-
-	workingVersion, err := i.repo.WorkingVersion(ctx)
-	if err != nil {
-		return fmt.Errorf("get working version: %w", err)
-	}
+	var jobs []FileJob
+	totalComments := 0
 
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return fmt.Errorf("make relative path: %w", err)
 		}
-
 		rel = filepath.ToSlash(rel)
+
 		if rel == "." {
 			return nil
 		}
@@ -98,28 +59,72 @@ func (i *Indexer) IndexDirectory(
 			return nil
 		}
 
-		if err := i.IndexFile(ctx, path, contextPrefix, commentPrefix, workingVersion); err != nil {
-			return fmt.Errorf("index file %s: %w", path, err)
+		comments, _, err := ExtractPrefixedBlocks(path, commentPrefix, contextPrefix)
+		if err != nil {
+			return fmt.Errorf("extract comments from %s: %w", path, err)
+		}
+		if len(comments) == 0 {
+			return nil
 		}
 
+		jobs = append(jobs, FileJob{
+			Path:          path,
+			CommentsCount: len(comments),
+		})
+		totalComments += len(comments)
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("walk dir: %w", err)
+		return nil, 0, err
 	}
 
-	if err := i.repo.ActivateVersion(ctx, workingVersion); err != nil {
-		return fmt.Errorf("activate version: %w", err)
-	}
-
-	if err := i.repo.CleanupOldVersions(ctx, workingVersion); err != nil {
-		return fmt.Errorf("cleanup old versions: %w", err)
-	}
-
-	return nil
+	return jobs, totalComments, nil
 }
 
-func resolveGitignorePath(root string, gitignorePath ...string) (string, error) {
+func (FileScanner) ExtractPrefixedBlocks(path string, searchPrefix string, ctxPrefix string) ([]IndexedComment, string, error) {
+	return ExtractPrefixedBlocks(path, searchPrefix, ctxPrefix)
+}
+
+func (FileScanner) ReadSearchResultContent(path string, line int, commentPrefix string, contextPrefix string) (string, string, error) {
+	comments, context, err := ExtractPrefixedBlocks(path, commentPrefix, contextPrefix)
+	if err == nil {
+		for _, comment := range comments {
+			if comment.Line == line {
+				return comment.Text, context, nil
+			}
+		}
+	}
+
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		if err != nil {
+			return "", "", err
+		}
+		return "", "", readErr
+	}
+
+	lines := strings.Split(normalizeText(string(data)), "\n")
+	if line <= 0 || line > len(lines) {
+		if err != nil {
+			return "", "", err
+		}
+		return "", strings.TrimSpace(context), nil
+	}
+
+	text := lines[line-1]
+	if payload, ok := extractDirectivePayload(text, commentPrefix); ok {
+		text = payload
+	} else {
+		text = strings.TrimSpace(text)
+	}
+
+	if err != nil {
+		return text, "", err
+	}
+	return text, strings.TrimSpace(context), nil
+}
+
+func ResolveGitignorePath(root string, gitignorePath ...string) (string, error) {
 	switch len(gitignorePath) {
 	case 0:
 		return filepath.Join(root, ".gitignore"), nil
@@ -155,7 +160,6 @@ func buildIgnoreMatcher(gitignorePath string, extraPatterns []string) (*ignore.G
 	}
 }
 
-// @search: .semsearch, .git, and README files are skipped during walking to avoid indexing runtime files, databases, logs, downloaded libraries, and documentation examples.
 func shouldSkipIndexedPath(rel string) bool {
 	rel = strings.Trim(strings.TrimSpace(filepath.ToSlash(rel)), "/")
 	if rel == "" || rel == "." {
@@ -180,8 +184,6 @@ func shouldSkipIndexedPath(rel string) bool {
 	}
 }
 
-// @search: ExtractPrefixedBlocks reads lines like // @search: and // @filectx: so searchable notes can live in normal source comments next to functions and types.
-// @search: binary files and files with extremely long lines are skipped so repository indexing does not fail on compiled artifacts or generated bundles.
 func ExtractPrefixedBlocks(path string, searchPrefix string, ctxPrefix string) ([]IndexedComment, string, error) {
 	const indexedTrailingLines = 10
 
@@ -222,10 +224,7 @@ func ExtractPrefixedBlocks(path string, searchPrefix string, ctxPrefix string) (
 
 		if payload, ok := extractDirectivePayload(line, ctxPrefix); ok {
 			if payload != "" {
-				comments = append(comments, IndexedComment{
-					Line: lineN,
-					Text: payload,
-				})
+				comments = append(comments, IndexedComment{Line: lineN, Text: payload})
 				if commentsContext.Len() > 0 {
 					commentsContext.WriteByte('\n')
 				}
@@ -352,58 +351,9 @@ func looksLikeBinary(data []byte) bool {
 	return suspicious*100/len(data) > 10
 }
 
-func (i *Indexer) IndexFile(
-	ctx context.Context,
-	path string,
-	contextPrefix string,
-	commentPrefix string,
-	workingVersion int64,
-) error {
-	comments, commentsContext, err := ExtractPrefixedBlocks(path, commentPrefix, contextPrefix)
-	if err != nil {
-		return fmt.Errorf("extract blocks: %w", err)
-	}
-
-	for _, comment := range comments {
-		if err := i.IndexComment(ctx, path, comment.Line, comment.Text, comment.FollowingText, workingVersion, commentsContext); err != nil {
-			return fmt.Errorf("index comment at %s:%d: %w", path, comment.Line, err)
-		}
-	}
-
-	return nil
-}
-
-func (i *Indexer) IndexComment(
-	ctx context.Context,
-	path string,
-	line int,
-	comment string,
-	followingText string,
-	workingVersion int64,
-	commentContext string,
-) error {
-	documentInput := formatIndexedCommentDocument(path, comment, commentContext, followingText)
-	hash := HashComment("embedding_doc_format:" + embeddingDocFormatVersion + "\n" + documentInput)
-
-	exists, err := i.repo.EmbeddingExists(ctx, hash)
-	if err != nil {
-		return fmt.Errorf("check embedding exists: %w", err)
-	}
-
-	if !exists {
-		vec, err := i.embedder.Embed(documentInput)
-		if err != nil {
-			return fmt.Errorf("embed comment: %w", err)
-		}
-
-		if err := i.repo.AddEmbedding(ctx, hash, vec); err != nil {
-			return fmt.Errorf("store embedding: %w", err)
-		}
-	}
-
-	if err := i.repo.UpsertComment(ctx, path, line, hash, workingVersion); err != nil {
-		return fmt.Errorf("upsert comment: %w", err)
-	}
-
-	return nil
+func normalizeText(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return s
 }

@@ -1,4 +1,4 @@
-package internal
+package llamaembed
 
 import (
 	"strings"
@@ -51,9 +51,9 @@ func TestNormalizeEmbeddingGemmaTitle(t *testing.T) {
 func TestHashCommentIsStable(t *testing.T) {
 	t.Parallel()
 
-	hashA := HashComment("same comment")
-	hashB := HashComment("same comment")
-	hashC := HashComment("other comment")
+	hashA := hashComment("same comment")
+	hashB := hashComment("same comment")
+	hashC := hashComment("other comment")
 
 	if hashA != hashB {
 		t.Fatalf("expected identical comments to have identical hashes")

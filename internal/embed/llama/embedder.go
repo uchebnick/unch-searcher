@@ -1,20 +1,25 @@
-package internal
+package llamaembed
 
-// @filectx: Embedding adapter around yzma llama bindings that loads the GGUF model, produces normalized vectors, and hashes indexed comments.
+// @filectx: yzma-backed embedding adapter that loads a GGUF model, formats retrieval prompts, and produces normalized vectors.
 
 import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/hybridgroup/yzma/pkg/llama"
+	"github.com/jupiterrider/ffi"
+	unchruntime "github.com/uchebnick/unch-searcher/internal/runtime"
 )
 
-type EmbeddingsConfig struct {
+type Config struct {
 	ModelPath   string
 	LibPath     string
 	ContextSize int
@@ -36,6 +41,7 @@ var (
 	llamaLoaded         bool
 	llamaLoadedLibPath  string
 	llamaInitRefCounter int
+	preloadedYzmaLibs   []ffi.Lib
 )
 
 const (
@@ -44,19 +50,19 @@ const (
 	embeddingDocFormatVersion          = "v3"
 )
 
-// @search: NewEmbedder loads yzma shared libraries once per process and rejects switching to a different lib path after llama is initialized.
-func NewEmbedder(cfg EmbeddingsConfig) (*Embedder, error) {
+// @search: New loads yzma shared libraries, opens the GGUF model, and creates an embedding context with mean pooling.
+func New(cfg Config) (*Embedder, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 
-	resolvedLibPath, _, err := resolveYzmaLibPath(cfg.LibPath)
+	resolvedLibPath, _, err := unchruntime.ResolveYzmaLibPath(cfg.LibPath)
 	if err != nil {
 		return nil, err
 	}
 	cfg.LibPath = resolvedLibPath
 
-	if err := ensureDynamicLibraryLookupPath(cfg.LibPath); err != nil {
+	if err := unchruntime.EnsureDynamicLibraryLookupPath(cfg.LibPath); err != nil {
 		return nil, fmt.Errorf("prepare dynamic library lookup path: %w", err)
 	}
 
@@ -136,7 +142,7 @@ func NewEmbedder(cfg EmbeddingsConfig) (*Embedder, error) {
 	}, nil
 }
 
-func (c EmbeddingsConfig) Validate() error {
+func (c Config) Validate() error {
 	if c.ModelPath == "" {
 		return fmt.Errorf("empty model path")
 	}
@@ -146,7 +152,6 @@ func (c EmbeddingsConfig) Validate() error {
 	return nil
 }
 
-// @search: Embedder.Close frees model and context handles and closes llama when the last reference is released.
 func (e *Embedder) Close() {
 	if e == nil {
 		return
@@ -182,13 +187,12 @@ func (e *Embedder) Dim() int {
 	return e.dim
 }
 
-// @search: Embed tokenizes text with the model vocabulary, decodes once, reads the pooled embedding vector, and l2-normalizes the result.
 func (e *Embedder) Embed(text string) ([]float32, error) {
 	if e == nil {
 		return nil, fmt.Errorf("nil embedder")
 	}
 
-	text = normalizeCommentText(text)
+	text = normalizeText(text)
 	if text == "" {
 		return nil, fmt.Errorf("empty text")
 	}
@@ -222,7 +226,6 @@ func (e *Embedder) Embed(text string) ([]float32, error) {
 	out := make([]float32, len(vec))
 	copy(out, vec)
 	l2Normalize(out)
-
 	return out, nil
 }
 
@@ -230,33 +233,20 @@ func (e *Embedder) EmbedQuery(text string) ([]float32, error) {
 	return e.Embed(formatEmbeddingGemmaQuery(text))
 }
 
-func (e *Embedder) EmbedDocument(title string, text string) ([]float32, error) {
-	return e.Embed(formatEmbeddingGemmaDocument(title, text))
+// @search: EmbedIndexedComment formats annotation text, file context, and following code into one retrieval document and returns its hash and vector.
+func (e *Embedder) EmbedIndexedComment(path string, comment string, commentContext string, followingText string) (string, []float32, error) {
+	documentInput := formatIndexedCommentDocument(path, comment, commentContext, followingText)
+	hash := hashComment("embedding_doc_format:" + embeddingDocFormatVersion + "\n" + documentInput)
+
+	vec, err := e.Embed(documentInput)
+	if err != nil {
+		return "", nil, err
+	}
+	return hash, vec, nil
 }
 
-func (e *Embedder) EmbedBatch(texts []string) ([][]float32, error) {
-	if e == nil {
-		return nil, fmt.Errorf("nil embedder")
-	}
-	if len(texts) == 0 {
-		return nil, nil
-	}
-
-	out := make([][]float32, 0, len(texts))
-	for i, text := range texts {
-		vec, err := e.Embed(text)
-		if err != nil {
-			return nil, fmt.Errorf("embed batch item %d: %w", i, err)
-		}
-		out = append(out, vec)
-	}
-
-	return out, nil
-}
-
-// @search: HashComment normalizes text and uses xxhash so identical comments reuse stored embeddings across files and indexing versions.
-func HashComment(text string) string {
-	sum := xxhash.Sum64String(normalizeCommentText(text))
+func hashComment(text string) string {
+	sum := xxhash.Sum64String(normalizeText(text))
 
 	var b [8]byte
 	b[0] = byte(sum >> 56)
@@ -271,7 +261,7 @@ func HashComment(text string) string {
 	return hex.EncodeToString(b[:])
 }
 
-func normalizeCommentText(s string) string {
+func normalizeText(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
@@ -279,9 +269,9 @@ func normalizeCommentText(s string) string {
 }
 
 func formatIndexedCommentDocument(path string, comment string, commentContext string, followingText string) string {
-	comment = normalizeCommentText(comment)
-	commentContext = normalizeCommentText(commentContext)
-	followingText = normalizeCommentText(followingText)
+	comment = normalizeText(comment)
+	commentContext = normalizeText(commentContext)
+	followingText = normalizeText(followingText)
 
 	var body strings.Builder
 	body.WriteString("Comment: ")
@@ -303,18 +293,18 @@ func formatIndexedCommentDocument(path string, comment string, commentContext st
 }
 
 func formatEmbeddingGemmaQuery(text string) string {
-	text = normalizeCommentText(text)
+	text = normalizeText(text)
 	return embeddingGemmaRetrievalQueryPrefix + text
 }
 
 func formatEmbeddingGemmaDocument(title string, text string) string {
 	title = normalizeEmbeddingGemmaTitle(title)
-	text = normalizeCommentText(text)
+	text = normalizeText(text)
 	return fmt.Sprintf(embeddingGemmaDocumentPrefix, title, text)
 }
 
 func normalizeEmbeddingGemmaTitle(title string) string {
-	title = normalizeCommentText(title)
+	title = normalizeText(title)
 	title = strings.ReplaceAll(title, "|", "/")
 	if title == "" {
 		return "none"
@@ -335,4 +325,63 @@ func l2Normalize(v []float32) {
 	for i := range v {
 		v[i] *= inv
 	}
+}
+
+func preloadYzmaSharedLibraries(libDir string) error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+
+	filenames, err := darwinPreloadLibraryNames(libDir)
+	if err != nil {
+		return err
+	}
+
+	for _, name := range filenames {
+		lib, err := ffi.Load(filepath.Join(libDir, name))
+		if err != nil {
+			return fmt.Errorf("preload %s: %w", name, err)
+		}
+		preloadedYzmaLibs = append(preloadedYzmaLibs, lib)
+	}
+
+	return nil
+}
+
+func darwinPreloadLibraryNames(libDir string) ([]string, error) {
+	entries, err := os.ReadDir(libDir)
+	if err != nil {
+		return nil, fmt.Errorf("read yzma lib dir: %w", err)
+	}
+
+	var names []string
+	add := func(name string) {
+		if _, err := os.Stat(filepath.Join(libDir, name)); err == nil {
+			names = append(names, name)
+		}
+	}
+
+	add("libggml-base.dylib")
+
+	var optional []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() {
+			continue
+		}
+		if !strings.HasPrefix(name, "libggml-") || !strings.HasSuffix(name, ".dylib") {
+			continue
+		}
+		if name == "libggml-base.dylib" {
+			continue
+		}
+		optional = append(optional, name)
+	}
+	sort.Strings(optional)
+	names = append(names, optional...)
+
+	add("libggml.dylib")
+	add("libllama.dylib")
+
+	return names, nil
 }

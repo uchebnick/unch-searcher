@@ -1,0 +1,123 @@
+package cli
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"path/filepath"
+
+	"github.com/uchebnick/unch-searcher/internal/embed/llama"
+	"github.com/uchebnick/unch-searcher/internal/indexdb"
+	"github.com/uchebnick/unch-searcher/internal/indexing"
+	"github.com/uchebnick/unch-searcher/internal/project"
+	"github.com/uchebnick/unch-searcher/internal/runtime"
+	"github.com/uchebnick/unch-searcher/internal/termui"
+)
+
+func runIndex(ctx context.Context, program string, args []string, paths project.Paths, s *termui.Session, scanner indexing.FileScanner, runtimes runtime.YzmaResolver, models runtime.ModelCache) error {
+	var excludes stringListFlag
+
+	defaultDBPath := filepath.Join(paths.LocalDir, "index.db")
+	defaultModelPath := filepath.Join(paths.ModelsDir, "embeddinggemma-300m.gguf")
+
+	fs := flag.NewFlagSet(program+" index", flag.ContinueOnError)
+	fs.SetOutput(nil)
+
+	root := fs.String("root", ".", "root directory to index")
+	dbPath := fs.String("db", defaultDBPath, "path to sqlite db")
+	modelPath := fs.String("model", defaultModelPath, "path to GGUF embedding model")
+	libPath := fs.String("lib", "", "path to yzma library directory, or to one of its shared library files")
+	contextPrefix := fs.String("context-prefix", "@filectx:", "file context prefix")
+	commentPrefix := fs.String("comment-prefix", "@search:", "comment prefix")
+	gitignorePath := fs.String("gitignore", "", "optional path to .gitignore; default is <root>/.gitignore")
+	contextSize := fs.Int("ctx-size", 2048, "llama context size")
+	batchSize := fs.Int("batch-size", 2048, "llama batch size")
+	verbose := fs.Bool("verbose", false, "enable yzma verbose logging")
+	fs.Var(&excludes, "exclude", "exclude pattern; can be used multiple times")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	modelWasExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "model" {
+			modelWasExplicit = true
+		}
+	})
+
+	resolvedLibPath, libNote, err := runtimes.ResolveOrInstallYzmaLibPath(ctx, *libPath, paths.LocalDir, s)
+	if err != nil {
+		return err
+	}
+	if libNote != "" {
+		s.Logf("%s", libNote)
+	}
+
+	resolvedModelPath, modelNote, err := models.ResolveOrInstallModelPath(ctx, *modelPath, defaultModelPath, !modelWasExplicit, s)
+	if err != nil {
+		return err
+	}
+	if modelNote != "" {
+		s.Logf("%s", modelNote)
+	}
+
+	rootAbs, err := filepath.Abs(*root)
+	if err != nil {
+		return fmt.Errorf("resolve root: %w", err)
+	}
+
+	resolvedGitignore, err := indexing.ResolveGitignorePath(rootAbs, *gitignorePath)
+	if err != nil {
+		return fmt.Errorf("resolve gitignore: %w", err)
+	}
+
+	s.Logf("db=%s", *dbPath)
+	s.Logf("lib=%s", resolvedLibPath)
+	s.Logf("model=%s", resolvedModelPath)
+	s.Logf("root=%s", rootAbs)
+
+	embedder, err := loadEmbedderWithSpinner(ctx, s, llamaembed.Config{
+		ModelPath:   resolvedModelPath,
+		LibPath:     resolvedLibPath,
+		ContextSize: *contextSize,
+		BatchSize:   *batchSize,
+		Verbose:     *verbose,
+		Pooling:     defaultPooling(),
+	})
+	if err != nil {
+		return err
+	}
+	defer embedder.Close()
+
+	repo, err := indexdb.Open(ctx, *dbPath, embedder.Dim())
+	if err != nil {
+		return err
+	}
+	defer repo.Close()
+
+	service := indexing.Service{
+		Scanner:  scanner,
+		Repo:     repo,
+		Embedder: embedder,
+	}
+
+	result, err := service.Run(ctx, indexing.Params{
+		Root:          rootAbs,
+		GitignorePath: resolvedGitignore,
+		Excludes:      excludes,
+		ContextPrefix: *contextPrefix,
+		CommentPrefix: *commentPrefix,
+	}, s)
+	if err != nil {
+		return err
+	}
+
+	if result.IndexedComments == 0 {
+		s.Finish("No comments found")
+		return nil
+	}
+
+	s.Finish(fmt.Sprintf("Indexed %d comments in %d files", result.IndexedComments, result.IndexedFiles))
+	return nil
+}

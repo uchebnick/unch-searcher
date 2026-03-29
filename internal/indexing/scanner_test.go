@@ -1,4 +1,4 @@
-package internal
+package indexing
 
 import "testing"
 
@@ -32,13 +32,7 @@ func TestShouldSkipIndexedPath(t *testing.T) {
 func TestCollectFollowingLines(t *testing.T) {
 	t.Parallel()
 
-	lines := []string{
-		"line1",
-		"line2",
-		"line3",
-		"line4",
-		"line5",
-	}
+	lines := []string{"line1", "line2", "line3", "line4", "line5"}
 
 	tests := []struct {
 		name  string

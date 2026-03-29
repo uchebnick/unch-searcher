@@ -1,6 +1,6 @@
-package internal
+package runtime
 
-// @filectx: Global GGUF model cache with auto-download, validation, repair of broken installs, and activation into a stable filename.
+// @filectx: Global GGUF model cache that downloads, validates, repairs, and reuses the embedding model across repositories.
 
 import (
 	"context"
@@ -11,13 +11,21 @@ import (
 	"sort"
 	"strings"
 
+	getter "github.com/hashicorp/go-getter"
 	"github.com/hybridgroup/yzma/pkg/download"
 )
 
+type Reporter interface {
+	Logf(format string, args ...any)
+	ProgressTracker(label string) getter.ProgressTracker
+}
+
 const defaultEmbeddingModelURL = "https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/resolve/main/embeddinggemma-300M-Q8_0.gguf?download=true"
 
-// @search: the default embedding model is downloaded once into the user cache and reused across project directories.
-func resolveOrInstallModelPath(ctx context.Context, requestedPath string, defaultPath string, allowAutoDownload bool, session *cliSession) (string, string, error) {
+type ModelCache struct{}
+
+// @search: ResolveOrInstallModelPath reuses the global cached GGUF model and auto-downloads the default embedding model when needed.
+func (ModelCache) ResolveOrInstallModelPath(ctx context.Context, requestedPath string, defaultPath string, allowAutoDownload bool, reporter Reporter) (string, string, error) {
 	requestedPath = strings.TrimSpace(requestedPath)
 	if requestedPath == "" {
 		requestedPath = defaultPath
@@ -39,7 +47,7 @@ func resolveOrInstallModelPath(ctx context.Context, requestedPath string, defaul
 		}
 
 		if allowAutoDownload && filepath.Clean(resolvedPath) == filepath.Clean(defaultResolvedPath) {
-			note, err := installDefaultEmbeddingModel(ctx, resolvedPath, session)
+			note, err := installDefaultEmbeddingModel(ctx, resolvedPath, reporter)
 			if err != nil {
 				return "", "", err
 			}
@@ -57,7 +65,7 @@ func resolveOrInstallModelPath(ctx context.Context, requestedPath string, defaul
 	}
 
 	if allowAutoDownload && filepath.Clean(resolvedPath) == filepath.Clean(defaultResolvedPath) {
-		note, err := installDefaultEmbeddingModel(ctx, resolvedPath, session)
+		note, err := installDefaultEmbeddingModel(ctx, resolvedPath, reporter)
 		if err != nil {
 			return "", "", err
 		}
@@ -70,8 +78,7 @@ func resolveOrInstallModelPath(ctx context.Context, requestedPath string, defaul
 	)
 }
 
-// @search: model installation downloads into a staging directory, finds the single GGUF file, validates the GGUF header, and atomically activates it.
-func installDefaultEmbeddingModel(ctx context.Context, destPath string, session *cliSession) (string, error) {
+func installDefaultEmbeddingModel(ctx context.Context, destPath string, reporter Reporter) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return "", fmt.Errorf("create model dir: %w", err)
 	}
@@ -84,7 +91,7 @@ func installDefaultEmbeddingModel(ctx context.Context, destPath string, session 
 			return fmt.Sprintf("using cached model from %s", destPath), nil
 		}
 
-		note, err := repairInstalledModel(destPath, session)
+		note, err := repairInstalledModel(destPath, reporter)
 		if err != nil {
 			return "", err
 		}
@@ -106,13 +113,13 @@ func installDefaultEmbeddingModel(ctx context.Context, destPath string, session 
 		_ = os.RemoveAll(stagingDir)
 	}()
 
-	if session != nil {
-		session.Logf("downloading default model from %s to %s", url, destPath)
+	if reporter != nil {
+		reporter.Logf("downloading default model from %s to %s", url, destPath)
 	}
 
 	progress := download.ProgressTracker
-	if session != nil {
-		progress = session.ProgressTracker("Downloading model")
+	if reporter != nil {
+		progress = reporter.ProgressTracker("Downloading model")
 	}
 
 	if err := download.GetModelWithContext(ctx, url, stagingDir, progress); err != nil {
@@ -132,12 +139,11 @@ func installDefaultEmbeddingModel(ctx context.Context, destPath string, session 
 		return "", fmt.Errorf("activate downloaded model: %w", err)
 	}
 
-	cleanupModelArtifacts(destPath, session)
+	cleanupModelArtifacts(destPath, reporter)
 	return fmt.Sprintf("downloaded default model to %s", destPath), nil
 }
 
-// @search: if an older broken install left a directory where the model file should be, repairInstalledModel promotes the nested GGUF file into place.
-func repairInstalledModel(destPath string, session *cliSession) (string, error) {
+func repairInstalledModel(destPath string, reporter Reporter) (string, error) {
 	modelFile, err := findSingleGGUFFile(destPath)
 	if err != nil {
 		return "", fmt.Errorf("repair cached model in %s: %w", destPath, err)
@@ -151,7 +157,7 @@ func repairInstalledModel(destPath string, session *cliSession) (string, error) 
 		return "", fmt.Errorf("repair cached model in %s: %w", destPath, err)
 	}
 
-	cleanupModelArtifacts(destPath, session)
+	cleanupModelArtifacts(destPath, reporter)
 	return fmt.Sprintf("repaired cached model at %s", destPath), nil
 }
 
@@ -235,8 +241,7 @@ func activateModelFile(sourcePath string, destPath string) error {
 	return nil
 }
 
-// @search: temporary model artifacts with .tmp and .activate suffixes are cleaned up after repair or download.
-func cleanupModelArtifacts(destPath string, session *cliSession) {
+func cleanupModelArtifacts(destPath string, reporter Reporter) {
 	parentDir := filepath.Dir(destPath)
 	base := filepath.Base(destPath)
 	patterns := []string{
@@ -247,8 +252,8 @@ func cleanupModelArtifacts(destPath string, session *cliSession) {
 	for _, pattern := range patterns {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
-			if session != nil {
-				session.Logf("skip cleanup for %s: %v", pattern, err)
+			if reporter != nil {
+				reporter.Logf("skip cleanup for %s: %v", pattern, err)
 			}
 			continue
 		}
@@ -256,8 +261,8 @@ func cleanupModelArtifacts(destPath string, session *cliSession) {
 			if filepath.Clean(match) == filepath.Clean(destPath) {
 				continue
 			}
-			if err := os.RemoveAll(match); err != nil && session != nil {
-				session.Logf("cleanup %s: %v", match, err)
+			if err := os.RemoveAll(match); err != nil && reporter != nil {
+				reporter.Logf("cleanup %s: %v", match, err)
 			}
 		}
 	}

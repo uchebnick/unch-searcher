@@ -1,4 +1,4 @@
-package internal
+package project
 
 import (
 	"path/filepath"

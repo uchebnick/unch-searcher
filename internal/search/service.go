@@ -1,0 +1,487 @@
+package search
+
+// @filectx: Search use case that chooses lexical or semantic retrieval and ranks current-version comment matches.
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"sort"
+	"strings"
+	"unicode"
+)
+
+type Reporter interface {
+	Logf(format string, args ...any)
+}
+
+type Repository interface {
+	SearchCurrent(ctx context.Context, queryEmbedding []float32, limit int) ([]SearchResult, error)
+	ListCurrentComments(ctx context.Context) ([]SearchResult, error)
+}
+
+type Embedder interface {
+	EmbedQuery(text string) ([]float32, error)
+}
+
+type ContentReader interface {
+	ReadSearchResultContent(path string, line int, commentPrefix string, contextPrefix string) (string, string, error)
+}
+
+type Result struct {
+	SearchResult
+	Text          string
+	LexicalScore  float64
+	DisplayMetric string
+	sortKey       float64
+}
+
+type Params struct {
+	QueryText     string
+	CommentPrefix string
+	ContextPrefix string
+	Limit         int
+	Mode          string
+	MaxDistance   float64
+}
+
+type Service struct {
+	Repo     Repository
+	Embedder Embedder
+	Scanner  ContentReader
+}
+
+func NormalizeMode(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case "", "auto":
+		return "auto", nil
+	case "semantic":
+		return "semantic", nil
+	case "lexical":
+		return "lexical", nil
+	default:
+		return "", fmt.Errorf("unknown search mode %q; expected auto, semantic, or lexical", mode)
+	}
+}
+
+// @search: Run chooses lexical or semantic retrieval mode, reads current-version comments, and returns ranked matches with display metrics.
+func (s Service) Run(ctx context.Context, params Params, reporter Reporter) ([]Result, error) {
+	if params.Limit <= 0 {
+		params.Limit = 10
+	}
+
+	switch params.Mode {
+	case "lexical":
+		return s.searchLexicalCurrent(ctx, params, reporter)
+	case "semantic":
+		return s.searchSemanticCurrent(ctx, params, reporter)
+	default:
+		if shouldPreferLexicalSearch(params.QueryText) {
+			return s.searchLexicalCurrent(ctx, params, reporter)
+		}
+
+		semanticResults, err := s.searchSemanticCurrent(ctx, params, reporter)
+		if err != nil {
+			return nil, err
+		}
+		if len(semanticResults) == 0 {
+			return s.searchLexicalCurrent(ctx, params, reporter)
+		}
+
+		lexicalResults, err := s.searchLexicalCurrent(ctx, params, reporter)
+		if err != nil {
+			return nil, err
+		}
+		if shouldPreferLexicalResults(semanticResults, lexicalResults) {
+			return lexicalResults, nil
+		}
+		return semanticResults, nil
+	}
+}
+
+func (s Service) searchSemanticCurrent(ctx context.Context, params Params, reporter Reporter) ([]Result, error) {
+	queryVec, err := s.Embedder.EmbedQuery(params.QueryText)
+	if err != nil {
+		return nil, fmt.Errorf("embed search query: %w", err)
+	}
+
+	candidateLimit := params.Limit * 5
+	if candidateLimit < 20 {
+		candidateLimit = 20
+	}
+
+	candidates, err := s.Repo.SearchCurrent(ctx, queryVec, candidateLimit)
+	if err != nil {
+		return nil, fmt.Errorf("search current index: %w", err)
+	}
+
+	ranked := make([]Result, 0, len(candidates))
+	for _, candidate := range candidates {
+		text, _, err := s.Scanner.ReadSearchResultContent(candidate.Path, candidate.Line, params.CommentPrefix, params.ContextPrefix)
+		if err != nil && reporter != nil {
+			reporter.Logf("read result snippet %s:%d: %v", candidate.Path, candidate.Line, err)
+		}
+
+		if params.MaxDistance > 0 && candidate.Distance > params.MaxDistance {
+			continue
+		}
+
+		ranked = append(ranked, Result{
+			SearchResult:  candidate,
+			Text:          text,
+			LexicalScore:  lexicalMatchScore(params.QueryText, candidate.Path, text),
+			DisplayMetric: fmt.Sprintf("%.4f", candidate.Distance),
+			sortKey:       candidate.Distance,
+		})
+	}
+
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].sortKey != ranked[j].sortKey {
+			return ranked[i].sortKey < ranked[j].sortKey
+		}
+		if ranked[i].Distance != ranked[j].Distance {
+			return ranked[i].Distance < ranked[j].Distance
+		}
+		if ranked[i].LexicalScore != ranked[j].LexicalScore {
+			return ranked[i].LexicalScore > ranked[j].LexicalScore
+		}
+		if ranked[i].Path != ranked[j].Path {
+			return ranked[i].Path < ranked[j].Path
+		}
+		return ranked[i].Line < ranked[j].Line
+	})
+
+	if len(ranked) > params.Limit {
+		ranked = ranked[:params.Limit]
+	}
+	return ranked, nil
+}
+
+func (s Service) searchLexicalCurrent(ctx context.Context, params Params, reporter Reporter) ([]Result, error) {
+	candidates, err := s.Repo.ListCurrentComments(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list current comments: %w", err)
+	}
+
+	ranked := make([]Result, 0, len(candidates))
+	for _, candidate := range candidates {
+		text, _, err := s.Scanner.ReadSearchResultContent(candidate.Path, candidate.Line, params.CommentPrefix, params.ContextPrefix)
+		if err != nil && reporter != nil {
+			reporter.Logf("read lexical result snippet %s:%d: %v", candidate.Path, candidate.Line, err)
+		}
+
+		score := lexicalMatchScore(params.QueryText, candidate.Path, text)
+		if score <= 0 {
+			continue
+		}
+
+		ranked = append(ranked, Result{
+			SearchResult:  candidate,
+			Text:          text,
+			LexicalScore:  score,
+			DisplayMetric: "lexical",
+			sortKey:       -score,
+		})
+	}
+
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].LexicalScore != ranked[j].LexicalScore {
+			return ranked[i].LexicalScore > ranked[j].LexicalScore
+		}
+		if ranked[i].Path != ranked[j].Path {
+			return ranked[i].Path < ranked[j].Path
+		}
+		return ranked[i].Line < ranked[j].Line
+	})
+
+	if len(ranked) > params.Limit {
+		ranked = ranked[:params.Limit]
+	}
+	return ranked, nil
+}
+
+func shouldPreferLexicalResults(semanticResults []Result, lexicalResults []Result) bool {
+	if len(lexicalResults) == 0 {
+		return false
+	}
+	if len(semanticResults) == 0 {
+		return true
+	}
+
+	semanticTop := semanticResults[0]
+	lexicalTop := lexicalResults[0]
+
+	if semanticTop.Distance > 0.88 && lexicalTop.LexicalScore >= 0.55 {
+		return true
+	}
+	if semanticTop.Distance > 0.82 && lexicalTop.LexicalScore >= 0.8 {
+		return true
+	}
+	return false
+}
+
+func shouldPreferLexicalSearch(query string) bool {
+	tokens := searchQueryTokens(query)
+	if len(tokens) == 0 {
+		return false
+	}
+	if looksCodeLikeQuery(query) {
+		return true
+	}
+	if len(tokens) == 1 && len([]rune(tokens[0])) <= 3 {
+		return true
+	}
+	return false
+}
+
+func looksCodeLikeQuery(query string) bool {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return false
+	}
+
+	hasUpper := false
+	hasLower := false
+
+	for _, r := range query {
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsLower(r):
+			hasLower = true
+		case unicode.IsDigit(r):
+			return true
+		case strings.ContainsRune("/._-:()[]{}", r):
+			return true
+		}
+	}
+
+	return hasUpper && hasLower
+}
+
+func lexicalMatchScore(query string, path string, text string) float64 {
+	queryNorm := normalizeSearchText(query)
+	if queryNorm == "" {
+		return 0
+	}
+
+	textNorm := normalizeSearchText(text)
+	pathNorm := normalizeSearchText(path)
+	docNorm := strings.TrimSpace(strings.TrimSpace(textNorm + " " + pathNorm))
+	if docNorm == "" {
+		return 0
+	}
+
+	queryTokens := searchQueryTokens(query)
+	if len(queryTokens) == 0 {
+		if strings.Contains(docNorm, queryNorm) {
+			return 1
+		}
+		return 0
+	}
+
+	score := 0.0
+	if strings.Contains(textNorm, queryNorm) {
+		score += 0.7
+	} else if strings.Contains(docNorm, queryNorm) {
+		score += 0.35
+	}
+
+	baseNorm := normalizeSearchText(filepath.Base(path))
+	textMatchedTokens := 0.0
+	docMatchedTokens := 0.0
+	for _, token := range queryTokens {
+		textWeight, docWeight, baseWeight, pathWeight := bestLexicalWeights(token, textNorm, docNorm, baseNorm, pathNorm)
+		textMatchedTokens += textWeight
+		docMatchedTokens += docWeight
+		if baseWeight > 0 {
+			score += 0.03 * baseWeight
+		} else if pathWeight > 0 {
+			score += 0.01 * pathWeight
+		}
+	}
+
+	score += 0.45 * float64(textMatchedTokens) / float64(len(queryTokens))
+	if docMatchedTokens > textMatchedTokens {
+		score += 0.1 * float64(docMatchedTokens-textMatchedTokens) / float64(len(queryTokens))
+	}
+	if len(queryTokens) > 1 && textMatchedTokens >= float64(len(queryTokens))*0.999 {
+		score += 0.25
+	} else if len(queryTokens) > 1 && docMatchedTokens >= float64(len(queryTokens))*0.999 {
+		score += 0.12
+	}
+	if len(queryTokens) == 1 && docMatchedTokens > 0 {
+		score += 0.2 * docMatchedTokens
+	}
+
+	if score > 1 {
+		return 1
+	}
+	return score
+}
+
+type weightedQueryToken struct {
+	token  string
+	weight float64
+}
+
+func bestLexicalWeights(token string, textNorm string, docNorm string, baseNorm string, pathNorm string) (float64, float64, float64, float64) {
+	var textWeight float64
+	var docWeight float64
+	var baseWeight float64
+	var pathWeight float64
+
+	for _, variant := range expandQueryToken(token) {
+		if strings.Contains(textNorm, variant.token) && variant.weight > textWeight {
+			textWeight = variant.weight
+		}
+		if strings.Contains(docNorm, variant.token) && variant.weight > docWeight {
+			docWeight = variant.weight
+		}
+		if strings.Contains(baseNorm, variant.token) && variant.weight > baseWeight {
+			baseWeight = variant.weight
+		}
+		if strings.Contains(pathNorm, variant.token) && variant.weight > pathWeight {
+			pathWeight = variant.weight
+		}
+	}
+
+	return textWeight, docWeight, baseWeight, pathWeight
+}
+
+func expandQueryToken(token string) []weightedQueryToken {
+	add := func(items *[]weightedQueryToken, seen map[string]struct{}, value string, weight float64) {
+		value = normalizeSearchText(value)
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		*items = append(*items, weightedQueryToken{token: value, weight: weight})
+	}
+
+	seen := make(map[string]struct{})
+	var expanded []weightedQueryToken
+	add(&expanded, seen, token, 1.0)
+
+	if singular := singularizeSearchToken(token); singular != token {
+		add(&expanded, seen, singular, 0.92)
+	}
+	if plural := pluralizeSearchToken(token); plural != token {
+		add(&expanded, seen, plural, 0.88)
+	}
+
+	for _, synonym := range searchTokenSynonyms(token) {
+		add(&expanded, seen, synonym, 0.72)
+	}
+
+	return expanded
+}
+
+func searchTokenSynonyms(token string) []string {
+	switch token {
+	case "database":
+		return []string{"db", "sqlite", "sql"}
+	case "db":
+		return []string{"database", "sqlite", "sql"}
+	case "sqlite":
+		return []string{"database", "db", "sql"}
+	case "sql":
+		return []string{"sqlite", "database", "db"}
+	case "library":
+		return []string{"lib", "libraries"}
+	case "libraries":
+		return []string{"library", "lib"}
+	case "lib":
+		return []string{"library", "libraries"}
+	case "embedding":
+		return []string{"embeddings", "vector", "vectors"}
+	case "embeddings":
+		return []string{"embedding", "vector", "vectors"}
+	case "vector":
+		return []string{"embedding", "embeddings", "vectors"}
+	case "vectors":
+		return []string{"vector", "embedding", "embeddings"}
+	case "search":
+		return []string{"query", "retrieval"}
+	case "query":
+		return []string{"search", "retrieval"}
+	case "runtime":
+		return []string{"shared", "library", "libraries"}
+	case "model":
+		return []string{"gguf", "embedding"}
+	case "cache":
+		return []string{"cached"}
+	default:
+		return nil
+	}
+}
+
+func singularizeSearchToken(token string) string {
+	switch {
+	case strings.HasSuffix(token, "ies") && len(token) > 3:
+		return token[:len(token)-3] + "y"
+	case strings.HasSuffix(token, "es") && len(token) > 2:
+		return token[:len(token)-2]
+	case strings.HasSuffix(token, "s") && len(token) > 1:
+		return token[:len(token)-1]
+	default:
+		return token
+	}
+}
+
+func pluralizeSearchToken(token string) string {
+	switch {
+	case strings.HasSuffix(token, "y") && len(token) > 1:
+		return token[:len(token)-1] + "ies"
+	case strings.HasSuffix(token, "s"):
+		return token
+	default:
+		return token + "s"
+	}
+}
+
+func searchQueryTokens(query string) []string {
+	normalized := normalizeSearchText(query)
+	if normalized == "" {
+		return nil
+	}
+
+	fields := strings.Fields(normalized)
+	seen := make(map[string]struct{}, len(fields))
+	tokens := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if field == "" {
+			continue
+		}
+		if _, exists := seen[field]; exists {
+			continue
+		}
+		seen[field] = struct{}{}
+		tokens = append(tokens, field)
+	}
+	return tokens
+}
+
+func normalizeSearchText(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+
+	lastSpace := true
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if !lastSpace {
+			b.WriteByte(' ')
+			lastSpace = true
+		}
+	}
+
+	return strings.TrimSpace(b.String())
+}

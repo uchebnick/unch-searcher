@@ -1,4 +1,4 @@
-package internal
+package search
 
 import (
 	"slices"
@@ -111,41 +111,30 @@ func TestLexicalMatchScore(t *testing.T) {
 func TestNormalizeSearchMode(t *testing.T) {
 	t.Parallel()
 
-	got, err := normalizeSearchMode("SeMaNtIc")
+	got, err := NormalizeMode("SeMaNtIc")
 	if err != nil {
-		t.Fatalf("normalizeSearchMode returned error: %v", err)
+		t.Fatalf("NormalizeMode returned error: %v", err)
 	}
 	if got != "semantic" {
-		t.Fatalf("normalizeSearchMode() = %q, want semantic", got)
+		t.Fatalf("NormalizeMode() = %q, want semantic", got)
 	}
 
-	if _, err := normalizeSearchMode("unknown"); err == nil {
+	if _, err := NormalizeMode("unknown"); err == nil {
 		t.Fatalf("expected error for unknown mode")
-	}
-}
-
-func TestFormatSearchResultPath(t *testing.T) {
-	t.Parallel()
-
-	if got := formatSearchResultPath("/tmp/project", "/tmp/project/internal/cli.go"); got != "internal/cli.go" {
-		t.Fatalf("formatSearchResultPath returned %q", got)
-	}
-	if got := formatSearchResultPath("/tmp/project", "/etc/hosts"); got != "/etc/hosts" {
-		t.Fatalf("formatSearchResultPath for external path = %q, want absolute path", got)
 	}
 }
 
 func TestShouldPreferLexicalResults(t *testing.T) {
 	t.Parallel()
 
-	semantic := []rankedSearchResult{{SearchResult: SearchResult{Distance: 0.9}}}
-	lexical := []rankedSearchResult{{LexicalScore: 0.7}}
+	semantic := []Result{{SearchResult: SearchResult{Distance: 0.9}}}
+	lexical := []Result{{LexicalScore: 0.7}}
 	if !shouldPreferLexicalResults(semantic, lexical) {
 		t.Fatalf("expected lexical results to win when semantic top distance is weak")
 	}
 
-	semantic = []rankedSearchResult{{SearchResult: SearchResult{Distance: 0.72}}}
-	lexical = []rankedSearchResult{{LexicalScore: 0.95}}
+	semantic = []Result{{SearchResult: SearchResult{Distance: 0.72}}}
+	lexical = []Result{{LexicalScore: 0.95}}
 	if shouldPreferLexicalResults(semantic, lexical) {
 		t.Fatalf("did not expect lexical results to win when semantic top distance is strong")
 	}
