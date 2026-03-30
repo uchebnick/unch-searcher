@@ -130,7 +130,7 @@ unch --root . \
 ### Search
 
 ```bash
-unch search "reuse one downloaded model in all projects"
+unch search "global model cache"
 ```
 
 Useful flags:
@@ -146,12 +146,12 @@ Examples:
 unch search "sqlite database schema"
 unch search --mode lexical "RunCLI"
 unch search --mode semantic "yzma runtime libraries"
-unch search --mode semantic --max-distance 0.80 "reuse one downloaded model in all projects"
+unch search --mode semantic --max-distance 0.80 "global model cache"
 ```
 
 ## Output
 
-Downloads and indexing render a compact progress bar:
+Model download and indexing render a compact progress bar:
 
 ```text
 Downloading model  [============================] 100% 313.4 MiB/313.4 MiB
@@ -163,9 +163,9 @@ Search output includes only file, line, and ranking metric:
 
 ```text
 Found 3 matches
- 1. internal/model_cache.go:19  0.8110
- 2. internal/model_cache.go:3   0.8465
- 3. internal/cli.go:100         lexical
+ 1. internal/runtime/model_cache.go:27  0.8110
+ 2. internal/runtime/model_cache.go:3   0.8465
+ 3. internal/cli/root.go:19             lexical
 ```
 
 - `lexical` means keyword-based ranking won

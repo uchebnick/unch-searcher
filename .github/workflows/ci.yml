@@ -60,7 +60,7 @@ jobs:
           path: coverage/
           if-no-files-found: error
 
-      - name: Publish coverage badge data
+      - name: Publish coverage badge
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
