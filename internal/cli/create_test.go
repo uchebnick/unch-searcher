@@ -50,6 +50,9 @@ func TestRunCreateCI(t *testing.T) {
 	if !strings.Contains(content, "GITHUB_TOKEN: ${{ github.token }}") {
 		t.Fatalf("generated workflow missing GitHub token env for indexing: %s", content)
 	}
+	if !strings.Contains(content, "SEMSEARCH_YZMA_PROCESSOR: cpu") {
+		t.Fatalf("generated workflow missing pinned yzma processor for indexing: %s", content)
+	}
 	if !strings.Contains(content, "SEMSEARCH_YZMA_VERSION: b8581") {
 		t.Fatalf("generated workflow missing pinned yzma version for indexing: %s", content)
 	}

@@ -161,6 +161,10 @@ func downloadYzmaLibraries(ctx context.Context, installRoot string, reporter Rep
 }
 
 func defaultYzmaProcessor() string {
+	if pinned := strings.TrimSpace(os.Getenv("SEMSEARCH_YZMA_PROCESSOR")); pinned != "" {
+		return pinned
+	}
+
 	switch runtime.GOOS {
 	case "darwin":
 		if runtime.GOARCH == "arm64" {

@@ -209,3 +209,11 @@ func TestCandidateLlamaVersionsUsesPinnedVersion(t *testing.T) {
 		t.Fatalf("candidateLlamaVersions() = %v, want [b8581]", got)
 	}
 }
+
+func TestDefaultYzmaProcessorUsesPinnedProcessor(t *testing.T) {
+	t.Setenv("SEMSEARCH_YZMA_PROCESSOR", "cpu")
+
+	if got := defaultYzmaProcessor(); got != "cpu" {
+		t.Fatalf("defaultYzmaProcessor() = %q, want %q", got, "cpu")
+	}
+}

@@ -221,6 +221,7 @@ This means:
 ## Environment Variables
 
 - `SEMSEARCH_HOME` overrides the global cache root
+- `SEMSEARCH_YZMA_PROCESSOR` pins the auto-downloaded `yzma` runtime backend, for example `cpu`
 - `SEMSEARCH_MODEL_URL` overrides the default GGUF model download URL
 - `SEMSEARCH_YZMA_VERSION` pins the auto-downloaded `yzma` runtime release
 - `YZMA_LIB` points to an existing `yzma` runtime directory
