@@ -40,6 +40,7 @@ type Params struct {
 }
 
 type Result struct {
+	Version         int64
 	IndexedFiles    int
 	IndexedComments int
 }
@@ -129,6 +130,7 @@ func (s Service) Run(ctx context.Context, params Params, reporter Reporter) (Res
 	}
 
 	return Result{
+		Version:         workingVersion,
 		IndexedFiles:    len(jobs),
 		IndexedComments: totalComments,
 	}, nil

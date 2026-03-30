@@ -1,4 +1,4 @@
-package project
+package semsearch
 
 import (
 	"fmt"
@@ -8,12 +8,13 @@ import (
 )
 
 type Paths struct {
-	LocalDir  string
-	ModelsDir string
+	LocalDir     string
+	ManifestPath string
+	ModelsDir    string
 }
 
-func PreparePaths(cwd string) (Paths, error) {
-	localDir := filepath.Join(cwd, ".semsearch")
+func PreparePaths(root string) (Paths, error) {
+	localDir := filepath.Join(root, ".semsearch")
 	globalDir, err := globalSemsearchDir()
 	if err != nil {
 		return Paths{}, err
@@ -28,8 +29,9 @@ func PreparePaths(cwd string) (Paths, error) {
 	}
 
 	return Paths{
-		LocalDir:  localDir,
-		ModelsDir: modelsDir,
+		LocalDir:     localDir,
+		ManifestPath: ManifestFilePath(localDir),
+		ModelsDir:    modelsDir,
 	}, nil
 }
 

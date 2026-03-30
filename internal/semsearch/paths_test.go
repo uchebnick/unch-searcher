@@ -1,4 +1,4 @@
-package project
+package semsearch
 
 import (
 	"path/filepath"

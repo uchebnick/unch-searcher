@@ -10,12 +10,12 @@ import (
 	"syscall"
 
 	"github.com/uchebnick/unch-searcher/internal/indexing"
-	"github.com/uchebnick/unch-searcher/internal/project"
 	"github.com/uchebnick/unch-searcher/internal/runtime"
+	"github.com/uchebnick/unch-searcher/internal/semsearch"
 	"github.com/uchebnick/unch-searcher/internal/termui"
 )
 
-// @search: Run is the clean-architecture replacement for the old RunCLI entrypoint and dispatches to index by default or to search when requested.
+// @search: Run is the clean-architecture replacement for the old RunCLI entrypoint and dispatches to init, index, or search.
 func Run(program string, args []string) (err error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -25,7 +25,15 @@ func Run(program string, args []string) (err error) {
 		return fmt.Errorf("get working dir: %w", err)
 	}
 
-	paths, err := project.PreparePaths(cwd)
+	command, commandArgs, err := detectCommand(args)
+	if err != nil {
+		return err
+	}
+	if command == "init" {
+		return runInit(ctx, program, commandArgs, cwd)
+	}
+
+	paths, err := semsearch.PreparePaths(cwd)
 	if err != nil {
 		return err
 	}
@@ -44,15 +52,10 @@ func Run(program string, args []string) (err error) {
 	s.Logf("args=%q", args)
 	s.Logf("cwd=%s", cwd)
 
-	command, commandArgs, err := detectCommand(args)
-	if err != nil {
-		return err
-	}
-	s.Logf("command=%s", command)
-
 	scanner := indexing.FileScanner{}
 	models := runtime.ModelCache{}
 	runtimes := runtime.YzmaResolver{}
+	s.Logf("command=%s", command)
 
 	switch command {
 	case "search":
@@ -68,7 +71,7 @@ func detectCommand(args []string) (string, []string, error) {
 	}
 
 	switch args[0] {
-	case "index", "search":
+	case "init", "index", "search":
 		return args[0], args[1:], nil
 	default:
 		if len(args[0]) > 0 && args[0][0] == '-' {

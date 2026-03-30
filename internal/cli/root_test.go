@@ -12,6 +12,7 @@ func TestDetectCommand(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "default index", args: nil, want: "index"},
+		{name: "init command", args: []string{"init"}, want: "init"},
 		{name: "index command", args: []string{"index", "--root", "."}, want: "index"},
 		{name: "search command", args: []string{"search", "RunCLI"}, want: "search"},
 		{name: "index flags without command", args: []string{"--root", "."}, want: "index"},

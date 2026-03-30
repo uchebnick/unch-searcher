@@ -9,12 +9,12 @@ import (
 	"github.com/uchebnick/unch-searcher/internal/embed/llama"
 	"github.com/uchebnick/unch-searcher/internal/indexdb"
 	"github.com/uchebnick/unch-searcher/internal/indexing"
-	"github.com/uchebnick/unch-searcher/internal/project"
 	"github.com/uchebnick/unch-searcher/internal/runtime"
+	"github.com/uchebnick/unch-searcher/internal/semsearch"
 	"github.com/uchebnick/unch-searcher/internal/termui"
 )
 
-func runIndex(ctx context.Context, program string, args []string, paths project.Paths, s *termui.Session, scanner indexing.FileScanner, runtimes runtime.YzmaResolver, models runtime.ModelCache) error {
+func runIndex(ctx context.Context, program string, args []string, paths semsearch.Paths, s *termui.Session, scanner indexing.FileScanner, runtimes runtime.YzmaResolver, models runtime.ModelCache) error {
 	var excludes stringListFlag
 
 	defaultDBPath := filepath.Join(paths.LocalDir, "index.db")
@@ -40,13 +40,32 @@ func runIndex(ctx context.Context, program string, args []string, paths project.
 	}
 
 	modelWasExplicit := false
+	dbWasExplicit := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "model" {
 			modelWasExplicit = true
 		}
+		if f.Name == "db" {
+			dbWasExplicit = true
+		}
 	})
 
-	resolvedLibPath, libNote, err := runtimes.ResolveOrInstallYzmaLibPath(ctx, *libPath, paths.LocalDir, s)
+	rootAbs, err := filepath.Abs(*root)
+	if err != nil {
+		return fmt.Errorf("resolve root: %w", err)
+	}
+
+	targetPaths, err := semsearch.PreparePaths(rootAbs)
+	if err != nil {
+		return err
+	}
+
+	resolvedDBPath := *dbPath
+	if !dbWasExplicit {
+		resolvedDBPath = filepath.Join(targetPaths.LocalDir, "index.db")
+	}
+
+	resolvedLibPath, libNote, err := runtimes.ResolveOrInstallYzmaLibPath(ctx, *libPath, targetPaths.LocalDir, s)
 	if err != nil {
 		return err
 	}
@@ -62,17 +81,12 @@ func runIndex(ctx context.Context, program string, args []string, paths project.
 		s.Logf("%s", modelNote)
 	}
 
-	rootAbs, err := filepath.Abs(*root)
-	if err != nil {
-		return fmt.Errorf("resolve root: %w", err)
-	}
-
 	resolvedGitignore, err := indexing.ResolveGitignorePath(rootAbs, *gitignorePath)
 	if err != nil {
 		return fmt.Errorf("resolve gitignore: %w", err)
 	}
 
-	s.Logf("db=%s", *dbPath)
+	s.Logf("db=%s", resolvedDBPath)
 	s.Logf("lib=%s", resolvedLibPath)
 	s.Logf("model=%s", resolvedModelPath)
 	s.Logf("root=%s", rootAbs)
@@ -90,7 +104,7 @@ func runIndex(ctx context.Context, program string, args []string, paths project.
 	}
 	defer embedder.Close()
 
-	repo, err := indexdb.Open(ctx, *dbPath, embedder.Dim())
+	repo, err := indexdb.Open(ctx, resolvedDBPath, embedder.Dim())
 	if err != nil {
 		return err
 	}
@@ -112,6 +126,12 @@ func runIndex(ctx context.Context, program string, args []string, paths project.
 	if err != nil {
 		return err
 	}
+
+	manifest, err := semsearch.UpdateIndexManifest(targetPaths.LocalDir, resolvedDBPath, result.Version)
+	if err != nil {
+		return fmt.Errorf("update manifest: %w", err)
+	}
+	s.Logf("manifest version=%d indexing_hash=%s", manifest.Version, manifest.IndexingHash)
 
 	if result.IndexedComments == 0 {
 		s.Finish("No comments found")
