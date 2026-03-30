@@ -38,10 +38,16 @@ jobs:
               if (percent < 0) percent = 0
               if (percent > 100) percent = 100
 
-              ratio = percent / 100
-              r = int((1 - ratio) * 229 + ratio * 46)
-              g = int((1 - ratio) * 57 + ratio * 160)
-              b = int((1 - ratio) * 53 + ratio * 67)
+              # Keep the badge bright across the whole range:
+              # red -> yellow -> green instead of a dark red/green mix.
+              if (percent <= 50) {
+                r = 255
+                g = int((percent / 50) * 255)
+              } else {
+                r = int(((100 - percent) / 50) * 255)
+                g = 255
+              }
+              b = 0
 
               printf "%02X%02X%02X", r, g, b
             }'
