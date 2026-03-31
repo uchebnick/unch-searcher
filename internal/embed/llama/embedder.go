@@ -16,6 +16,7 @@ import (
 	"github.com/cespare/xxhash/v2"
 	"github.com/hybridgroup/yzma/pkg/llama"
 	"github.com/jupiterrider/ffi"
+	"github.com/uchebnick/unch-searcher/internal/indexing"
 	unchruntime "github.com/uchebnick/unch-searcher/internal/runtime"
 )
 
@@ -47,7 +48,7 @@ var (
 const (
 	embeddingGemmaRetrievalQueryPrefix = "task: code retrieval | query: "
 	embeddingGemmaDocumentPrefix       = "title: %s | text: %s"
-	embeddingDocFormatVersion          = "v3"
+	embeddingDocFormatVersion          = "v4"
 )
 
 // @search: New loads yzma shared libraries, opens the GGUF model, and creates an embedding context with mean pooling.
@@ -233,9 +234,9 @@ func (e *Embedder) EmbedQuery(text string) ([]float32, error) {
 	return e.Embed(formatEmbeddingGemmaQuery(text))
 }
 
-// @search: EmbedIndexedComment formats annotation text, file context, and following code into one retrieval document and returns its hash and vector.
-func (e *Embedder) EmbedIndexedComment(path string, comment string, commentContext string, followingText string) (string, []float32, error) {
-	documentInput := formatIndexedCommentDocument(path, comment, commentContext, followingText)
+// @search: EmbedIndexedSymbol formats symbol metadata, docs, and code into one retrieval document and returns its hash and vector.
+func (e *Embedder) EmbedIndexedSymbol(path string, symbol indexing.IndexedSymbol) (string, []float32, error) {
+	documentInput := formatIndexedSymbolDocument(path, symbol)
 	hash := hashComment("embedding_doc_format:" + embeddingDocFormatVersion + "\n" + documentInput)
 
 	vec, err := e.Embed(documentInput)
@@ -268,26 +269,53 @@ func normalizeText(s string) string {
 	return s
 }
 
-func formatIndexedCommentDocument(path string, comment string, commentContext string, followingText string) string {
-	comment = normalizeText(comment)
-	commentContext = normalizeText(commentContext)
-	followingText = normalizeText(followingText)
+func formatIndexedSymbolDocument(path string, symbol indexing.IndexedSymbol) string {
+	kind := normalizeText(symbol.Kind)
+	name := normalizeText(symbol.Name)
+	qualifiedName := normalizeText(symbol.QualifiedName)
+	signature := normalizeText(symbol.Signature)
+	documentation := normalizeText(symbol.Documentation)
+	fileContext := normalizeText(symbol.FileContext)
+	bodyText := normalizeText(symbol.Body)
 
 	var body strings.Builder
-	body.WriteString("Comment: ")
-	body.WriteString(comment)
-	if commentContext != "" {
-		body.WriteString("\nContext: ")
-		body.WriteString(commentContext)
+	body.WriteString("Path: ")
+	body.WriteString(path)
+	if kind != "" {
+		body.WriteString("\nKind: ")
+		body.WriteString(kind)
 	}
-	if followingText != "" {
-		body.WriteString("\nFollowing code:\n")
-		body.WriteString(followingText)
+	if name != "" {
+		body.WriteString("\nName: ")
+		body.WriteString(name)
+	}
+	if qualifiedName != "" && qualifiedName != name {
+		body.WriteString("\nQualified name: ")
+		body.WriteString(qualifiedName)
+	}
+	if signature != "" {
+		body.WriteString("\nSignature:\n")
+		body.WriteString(signature)
+	}
+	if documentation != "" {
+		body.WriteString("\nDocumentation:\n")
+		body.WriteString(documentation)
+	}
+	if fileContext != "" {
+		body.WriteString("\nFile context:\n")
+		body.WriteString(fileContext)
+	}
+	if bodyText != "" {
+		body.WriteString("\nBody snippet:\n")
+		body.WriteString(bodyText)
 	}
 
-	title := strings.TrimSpace(filepath.Base(path))
+	title := normalizeText(strings.TrimSpace(filepath.Base(path)))
 	if title == "" || title == "." || title == string(filepath.Separator) {
-		title = "none"
+		title = "symbol"
+	}
+	if qualifiedName != "" {
+		title = strings.TrimSpace(title + " " + qualifiedName)
 	}
 	return formatEmbeddingGemmaDocument(title, body.String())
 }

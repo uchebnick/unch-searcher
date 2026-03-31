@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/uchebnick/unch-searcher/internal/indexing"
 )
 
 func TestStoreLifecycle(t *testing.T) {
@@ -33,11 +35,25 @@ func TestStoreLifecycle(t *testing.T) {
 	if err := store.AddEmbedding(ctx, "hash2", []float32{0, 1, 0}); err != nil {
 		t.Fatalf("AddEmbedding(hash2) error: %v", err)
 	}
-	if err := store.UpsertComment(ctx, "/tmp/a.go", 10, "hash1", 1); err != nil {
-		t.Fatalf("UpsertComment(hash1) error: %v", err)
+	if err := store.UpsertSymbol(ctx, "a.go", indexing.IndexedSymbol{
+		Line:          10,
+		Kind:          "function",
+		Name:          "A",
+		QualifiedName: "A",
+		Signature:     "func A()",
+		Documentation: "A docs",
+	}, "hash1", 1); err != nil {
+		t.Fatalf("UpsertSymbol(hash1) error: %v", err)
 	}
-	if err := store.UpsertComment(ctx, "/tmp/b.go", 20, "hash2", 0); err != nil {
-		t.Fatalf("UpsertComment(hash2) error: %v", err)
+	if err := store.UpsertSymbol(ctx, "b.go", indexing.IndexedSymbol{
+		Line:          20,
+		Kind:          "function",
+		Name:          "B",
+		QualifiedName: "B",
+		Signature:     "func B()",
+		Documentation: "B docs",
+	}, "hash2", 0); err != nil {
+		t.Fatalf("UpsertSymbol(hash2) error: %v", err)
 	}
 	if err := store.ActivateVersion(ctx, 1); err != nil {
 		t.Fatalf("ActivateVersion() error: %v", err)
@@ -48,19 +64,19 @@ func TestStoreLifecycle(t *testing.T) {
 		t.Fatalf("EmbeddingExists(hash1) = (%v, %v)", exists, err)
 	}
 
-	listed, err := store.ListCurrentComments(ctx)
+	listed, err := store.ListCurrentSymbols(ctx)
 	if err != nil {
-		t.Fatalf("ListCurrentComments() error: %v", err)
+		t.Fatalf("ListCurrentSymbols() error: %v", err)
 	}
-	if len(listed) != 1 || listed[0].Path != "/tmp/a.go" {
-		t.Fatalf("ListCurrentComments() = %+v", listed)
+	if len(listed) != 1 || listed[0].Path != "a.go" || listed[0].QualifiedName != "A" {
+		t.Fatalf("ListCurrentSymbols() = %+v", listed)
 	}
 
 	results, err := store.SearchCurrent(ctx, vec, 5)
 	if err != nil {
 		t.Fatalf("SearchCurrent() error: %v", err)
 	}
-	if len(results) == 0 || results[0].Path != "/tmp/a.go" {
+	if len(results) == 0 || results[0].Path != "a.go" || results[0].QualifiedName != "A" {
 		t.Fatalf("SearchCurrent() = %+v", results)
 	}
 
@@ -93,8 +109,16 @@ func TestLogicalHashIgnoresCurrentVersionMetadata(t *testing.T) {
 	if err := store.AddEmbedding(ctx, "hash1", vec); err != nil {
 		t.Fatalf("AddEmbedding() error: %v", err)
 	}
-	if err := store.UpsertComment(ctx, "/tmp/a.go", 10, "hash1", 1); err != nil {
-		t.Fatalf("UpsertComment(version=1) error: %v", err)
+	symbol := indexing.IndexedSymbol{
+		Line:          10,
+		Kind:          "function",
+		Name:          "A",
+		QualifiedName: "A",
+		Signature:     "func A()",
+		Documentation: "A docs",
+	}
+	if err := store.UpsertSymbol(ctx, "a.go", symbol, "hash1", 1); err != nil {
+		t.Fatalf("UpsertSymbol(version=1) error: %v", err)
 	}
 	if err := store.ActivateVersion(ctx, 1); err != nil {
 		t.Fatalf("ActivateVersion(1) error: %v", err)
@@ -105,8 +129,8 @@ func TestLogicalHashIgnoresCurrentVersionMetadata(t *testing.T) {
 		t.Fatalf("LogicalHash(first) error: %v", err)
 	}
 
-	if err := store.UpsertComment(ctx, "/tmp/a.go", 10, "hash1", 2); err != nil {
-		t.Fatalf("UpsertComment(version=2) error: %v", err)
+	if err := store.UpsertSymbol(ctx, "a.go", symbol, "hash1", 2); err != nil {
+		t.Fatalf("UpsertSymbol(version=2) error: %v", err)
 	}
 	if err := store.ActivateVersion(ctx, 2); err != nil {
 		t.Fatalf("ActivateVersion(2) error: %v", err)

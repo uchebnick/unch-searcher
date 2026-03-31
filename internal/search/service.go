@@ -17,15 +17,11 @@ type Reporter interface {
 
 type Repository interface {
 	SearchCurrent(ctx context.Context, queryEmbedding []float32, limit int) ([]SearchResult, error)
-	ListCurrentComments(ctx context.Context) ([]SearchResult, error)
+	ListCurrentSymbols(ctx context.Context) ([]SearchResult, error)
 }
 
 type Embedder interface {
 	EmbedQuery(text string) ([]float32, error)
-}
-
-type ContentReader interface {
-	ReadSearchResultContent(path string, line int, commentPrefix string, contextPrefix string) (string, string, error)
 }
 
 type Result struct {
@@ -48,7 +44,6 @@ type Params struct {
 type Service struct {
 	Repo     Repository
 	Embedder Embedder
-	Scanner  ContentReader
 }
 
 func NormalizeMode(mode string) (string, error) {
@@ -65,7 +60,7 @@ func NormalizeMode(mode string) (string, error) {
 	}
 }
 
-// @search: Run chooses lexical or semantic retrieval mode, reads current-version comments, and returns ranked matches with display metrics.
+// @search: Run chooses lexical or semantic retrieval mode, ranks current-version symbols, and returns matches with display metrics.
 func (s Service) Run(ctx context.Context, params Params, reporter Reporter) ([]Result, error) {
 	if params.Limit <= 0 {
 		params.Limit = 10
@@ -100,7 +95,7 @@ func (s Service) Run(ctx context.Context, params Params, reporter Reporter) ([]R
 	}
 }
 
-func (s Service) searchSemanticCurrent(ctx context.Context, params Params, reporter Reporter) ([]Result, error) {
+func (s Service) searchSemanticCurrent(ctx context.Context, params Params, _ Reporter) ([]Result, error) {
 	queryVec, err := s.Embedder.EmbedQuery(params.QueryText)
 	if err != nil {
 		return nil, fmt.Errorf("embed search query: %w", err)
@@ -118,10 +113,7 @@ func (s Service) searchSemanticCurrent(ctx context.Context, params Params, repor
 
 	ranked := make([]Result, 0, len(candidates))
 	for _, candidate := range candidates {
-		text, _, err := s.Scanner.ReadSearchResultContent(candidate.Path, candidate.Line, params.CommentPrefix, params.ContextPrefix)
-		if err != nil && reporter != nil {
-			reporter.Logf("read result snippet %s:%d: %v", candidate.Path, candidate.Line, err)
-		}
+		text := resultSearchText(candidate)
 
 		if params.MaxDistance > 0 && candidate.Distance > params.MaxDistance {
 			continue
@@ -130,7 +122,7 @@ func (s Service) searchSemanticCurrent(ctx context.Context, params Params, repor
 		ranked = append(ranked, Result{
 			SearchResult:  candidate,
 			Text:          text,
-			LexicalScore:  lexicalMatchScore(params.QueryText, candidate.Path, text),
+			LexicalScore:  lexicalMatchScore(params.QueryText, candidate),
 			DisplayMetric: fmt.Sprintf("%.4f", candidate.Distance),
 			sortKey:       candidate.Distance,
 		})
@@ -158,20 +150,17 @@ func (s Service) searchSemanticCurrent(ctx context.Context, params Params, repor
 	return ranked, nil
 }
 
-func (s Service) searchLexicalCurrent(ctx context.Context, params Params, reporter Reporter) ([]Result, error) {
-	candidates, err := s.Repo.ListCurrentComments(ctx)
+func (s Service) searchLexicalCurrent(ctx context.Context, params Params, _ Reporter) ([]Result, error) {
+	candidates, err := s.Repo.ListCurrentSymbols(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list current comments: %w", err)
+		return nil, fmt.Errorf("list current symbols: %w", err)
 	}
 
 	ranked := make([]Result, 0, len(candidates))
 	for _, candidate := range candidates {
-		text, _, err := s.Scanner.ReadSearchResultContent(candidate.Path, candidate.Line, params.CommentPrefix, params.ContextPrefix)
-		if err != nil && reporter != nil {
-			reporter.Logf("read lexical result snippet %s:%d: %v", candidate.Path, candidate.Line, err)
-		}
+		text := resultSearchText(candidate)
 
-		score := lexicalMatchScore(params.QueryText, candidate.Path, text)
+		score := lexicalMatchScore(params.QueryText, candidate)
 		if score <= 0 {
 			continue
 		}
@@ -199,6 +188,25 @@ func (s Service) searchLexicalCurrent(ctx context.Context, params Params, report
 		ranked = ranked[:params.Limit]
 	}
 	return ranked, nil
+}
+
+func resultSearchText(result SearchResult) string {
+	var parts []string
+	for _, value := range []string{
+		result.Kind,
+		result.Name,
+		result.Container,
+		result.QualifiedName,
+		result.Signature,
+		result.Documentation,
+		result.Body,
+	} {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			parts = append(parts, value)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 func shouldPreferLexicalResults(semanticResults []Result, lexicalResults []Result) bool {
@@ -260,14 +268,14 @@ func looksCodeLikeQuery(query string) bool {
 	return hasUpper && hasLower
 }
 
-func lexicalMatchScore(query string, path string, text string) float64 {
+func lexicalMatchScore(query string, candidate SearchResult) float64 {
 	queryNorm := normalizeSearchText(query)
 	if queryNorm == "" {
 		return 0
 	}
 
-	textNorm := normalizeSearchText(text)
-	pathNorm := normalizeSearchText(path)
+	textNorm := normalizeSearchText(resultSearchText(candidate))
+	pathNorm := normalizeSearchText(candidate.Path)
 	docNorm := strings.TrimSpace(strings.TrimSpace(textNorm + " " + pathNorm))
 	if docNorm == "" {
 		return 0
@@ -288,7 +296,7 @@ func lexicalMatchScore(query string, path string, text string) float64 {
 		score += 0.35
 	}
 
-	baseNorm := normalizeSearchText(filepath.Base(path))
+	baseNorm := normalizeSearchText(filepath.Base(candidate.Path))
 	textMatchedTokens := 0.0
 	docMatchedTokens := 0.0
 	for _, token := range queryTokens {

@@ -1,6 +1,6 @@
 package indexing
 
-// @filectx: Indexing use case that scans repository files, embeds annotations, and activates a new search version.
+// @filectx: Indexing use case that scans repository files, embeds extracted symbols, and activates a new search version.
 
 import (
 	"context"
@@ -14,21 +14,20 @@ type Reporter interface {
 
 type Scanner interface {
 	CollectJobs(root string, gitignorePath string, extraPatterns []string, commentPrefix string, contextPrefix string) ([]FileJob, int, error)
-	ExtractPrefixedBlocks(path string, searchPrefix string, ctxPrefix string) ([]IndexedComment, string, error)
 }
 
 type Repository interface {
 	WorkingVersion(ctx context.Context) (int64, error)
 	ActivateVersion(ctx context.Context, version int64) error
-	EmbeddingExists(ctx context.Context, commentHash string) (bool, error)
-	AddEmbedding(ctx context.Context, commentHash string, embedding []float32) error
-	UpsertComment(ctx context.Context, path string, line int, commentHash string, version int64) error
+	EmbeddingExists(ctx context.Context, embeddingHash string) (bool, error)
+	AddEmbedding(ctx context.Context, embeddingHash string, embedding []float32) error
+	UpsertSymbol(ctx context.Context, path string, symbol IndexedSymbol, embeddingHash string, version int64) error
 	CleanupOldVersions(ctx context.Context, activeVersion int64) error
 	CleanupUnusedEmbeddings(ctx context.Context) error
 }
 
 type Embedder interface {
-	EmbedIndexedComment(path string, comment string, commentContext string, followingText string) (string, []float32, error)
+	EmbedIndexedSymbol(path string, symbol IndexedSymbol) (string, []float32, error)
 }
 
 type Params struct {
@@ -40,9 +39,9 @@ type Params struct {
 }
 
 type Result struct {
-	Version         int64
-	IndexedFiles    int
-	IndexedComments int
+	Version        int64
+	IndexedFiles   int
+	IndexedSymbols int
 }
 
 type Service struct {
@@ -51,9 +50,9 @@ type Service struct {
 	Embedder Embedder
 }
 
-// @search: Run collects annotated files, reuses stored embeddings by hash, and writes the next active repository version.
+// @search: Run collects extracted symbols, reuses stored embeddings by hash, and writes the next active repository version.
 func (s Service) Run(ctx context.Context, params Params, reporter Reporter) (Result, error) {
-	jobs, totalComments, err := s.Scanner.CollectJobs(
+	jobs, totalSymbols, err := s.Scanner.CollectJobs(
 		params.Root,
 		params.GitignorePath,
 		params.Excludes,
@@ -65,7 +64,7 @@ func (s Service) Run(ctx context.Context, params Params, reporter Reporter) (Res
 	}
 	if reporter != nil {
 		reporter.Logf("files to index=%d", len(jobs))
-		reporter.Logf("comments to index=%d", totalComments)
+		reporter.Logf("symbols to index=%d", totalSymbols)
 	}
 
 	workingVersion, err := s.Repo.WorkingVersion(ctx)
@@ -84,20 +83,10 @@ func (s Service) Run(ctx context.Context, params Params, reporter Reporter) (Res
 		default:
 		}
 
-		sourcePath := job.SourcePath
-		if sourcePath == "" {
-			sourcePath = job.Path
-		}
-
-		comments, commentContext, err := s.Scanner.ExtractPrefixedBlocks(sourcePath, params.CommentPrefix, params.ContextPrefix)
-		if err != nil {
-			return Result{}, fmt.Errorf("extract blocks from %s: %w", job.Path, err)
-		}
-
-		for _, comment := range comments {
-			hash, vec, err := s.Embedder.EmbedIndexedComment(job.Path, comment.Text, commentContext, comment.FollowingText)
+		for _, symbol := range job.Symbols {
+			hash, vec, err := s.Embedder.EmbedIndexedSymbol(job.Path, symbol)
 			if err != nil {
-				return Result{}, fmt.Errorf("embed comment at %s:%d: %w", job.Path, comment.Line, err)
+				return Result{}, fmt.Errorf("embed symbol at %s:%d: %w", job.Path, symbol.Line, err)
 			}
 
 			exists, err := s.Repo.EmbeddingExists(ctx, hash)
@@ -110,14 +99,14 @@ func (s Service) Run(ctx context.Context, params Params, reporter Reporter) (Res
 				}
 			}
 
-			if err := s.Repo.UpsertComment(ctx, job.Path, comment.Line, hash, workingVersion); err != nil {
-				return Result{}, fmt.Errorf("upsert comment: %w", err)
+			if err := s.Repo.UpsertSymbol(ctx, job.Path, symbol, hash, workingVersion); err != nil {
+				return Result{}, fmt.Errorf("upsert symbol: %w", err)
 			}
 		}
 
-		processed += job.CommentsCount
+		processed += len(job.Symbols)
 		if reporter != nil {
-			reporter.CountProgress("Indexing", processed, totalComments)
+			reporter.CountProgress("Indexing", processed, totalSymbols)
 		}
 	}
 
@@ -135,8 +124,8 @@ func (s Service) Run(ctx context.Context, params Params, reporter Reporter) (Res
 	}
 
 	return Result{
-		Version:         workingVersion,
-		IndexedFiles:    len(jobs),
-		IndexedComments: totalComments,
+		Version:        workingVersion,
+		IndexedFiles:   len(jobs),
+		IndexedSymbols: totalSymbols,
 	}, nil
 }

@@ -16,7 +16,7 @@ import (
 	"github.com/uchebnick/unch-searcher/internal/termui"
 )
 
-func runSearch(ctx context.Context, program string, args []string, paths semsearch.Paths, s *termui.Session, scanner indexing.FileScanner, runtimes runtime.YzmaResolver, models runtime.ModelCache) error {
+func runSearch(ctx context.Context, program string, args []string, paths semsearch.Paths, s *termui.Session, _ indexing.FileScanner, runtimes runtime.YzmaResolver, models runtime.ModelCache) error {
 	defaultDBPath := filepath.Join(paths.LocalDir, "index.db")
 	defaultModelPath := filepath.Join(paths.ModelsDir, "embeddinggemma-300m.gguf")
 
@@ -28,8 +28,8 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 	modelPath := fs.String("model", defaultModelPath, "path to GGUF embedding model")
 	libPath := fs.String("lib", "", "path to yzma library directory, or to one of its shared library files")
 	queryFlag := fs.String("query", "", "search query; if empty, remaining args are joined")
-	commentPrefix := fs.String("comment-prefix", "@search:", "comment prefix used for indexed lines")
-	contextPrefix := fs.String("context-prefix", "@filectx:", "file context prefix used for indexed files")
+	commentPrefix := fs.String("comment-prefix", "@search:", "legacy comment prefix used only by fallback indexers")
+	contextPrefix := fs.String("context-prefix", "@filectx:", "legacy file context prefix used only by fallback indexers")
 	contextSize := fs.Int("ctx-size", 2048, "llama context size")
 	batchSize := fs.Int("batch-size", 2048, "llama batch size")
 	limit := fs.Int("limit", 10, "max number of search results")
@@ -74,7 +74,6 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 	if err != nil {
 		return err
 	}
-	scanner.Root = rootAbs
 
 	remoteSync, err := semsearch.SyncRemoteIndex(ctx, targetPaths.LocalDir)
 	if err != nil {
@@ -136,7 +135,6 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 	service := appsearch.Service{
 		Repo:     repo,
 		Embedder: embedder,
-		Scanner:  scanner,
 	}
 
 	results, err := service.Run(ctx, appsearch.Params{

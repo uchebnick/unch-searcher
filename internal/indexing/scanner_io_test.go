@@ -27,7 +27,7 @@ func TestResolveGitignorePath(t *testing.T) {
 	}
 }
 
-func TestExtractPrefixedBlocksAndReadContent(t *testing.T) {
+func TestExtractPrefixedBlocksAndLegacySymbols(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -58,22 +58,15 @@ func TestExtractPrefixedBlocksAndReadContent(t *testing.T) {
 		t.Fatalf("unexpected comment payload: %+v", comments[1])
 	}
 
-	scanner := FileScanner{}
-	text, readCtx, err := scanner.ReadSearchResultContent(path, 2, "@search:", "@filectx:")
+	symbols, err := extractLegacySymbols(path, "@search:", "@filectx:")
 	if err != nil {
-		t.Fatalf("ReadSearchResultContent() error: %v", err)
+		t.Fatalf("extractLegacySymbols() error: %v", err)
 	}
-	if text != "first comment" || readCtx != "file context" {
-		t.Fatalf("ReadSearchResultContent() = (%q, %q)", text, readCtx)
+	if len(symbols) != 3 {
+		t.Fatalf("expected three legacy symbols, got %d", len(symbols))
 	}
-
-	relativeScanner := FileScanner{Root: dir}
-	text, readCtx, err = relativeScanner.ReadSearchResultContent("sample.go", 2, "@search:", "@filectx:")
-	if err != nil {
-		t.Fatalf("ReadSearchResultContent(relative) error: %v", err)
-	}
-	if text != "first comment" || readCtx != "file context" {
-		t.Fatalf("ReadSearchResultContent(relative) = (%q, %q)", text, readCtx)
+	if symbols[1].Documentation != "first comment" || symbols[1].FileContext != "file context" {
+		t.Fatalf("unexpected legacy symbol: %+v", symbols[1])
 	}
 }
 
@@ -92,8 +85,8 @@ func TestCollectJobsSkipsNoiseAndRespectsGitignore(t *testing.T) {
 	}
 
 	files := map[string]string{
-		"keep.go":      "// @search: keep me\nfunc Keep() {}\n",
-		"ignored.go":   "// @search: ignored by gitignore\n",
+		"keep.go":      "package demo\n\n// Keep runs.\nfunc Keep() {}\n",
+		"ignored.go":   "package demo\n\n// Ignored runs.\nfunc Ignored() {}\n",
 		"README.md":    "// @search: ignored readme\n",
 		".semsearch/a": "// @search: ignored local state\n",
 	}
@@ -119,6 +112,9 @@ func TestCollectJobsSkipsNoiseAndRespectsGitignore(t *testing.T) {
 	}
 	if jobs[0].SourcePath != filepath.Join(root, "keep.go") {
 		t.Fatalf("unexpected source job path %q", jobs[0].SourcePath)
+	}
+	if len(jobs[0].Symbols) != 1 || jobs[0].Symbols[0].QualifiedName != "Keep" {
+		t.Fatalf("unexpected collected symbols %+v", jobs[0].Symbols)
 	}
 }
 

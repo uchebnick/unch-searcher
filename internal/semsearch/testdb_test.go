@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/uchebnick/unch-searcher/internal/indexdb"
+	"github.com/uchebnick/unch-searcher/internal/indexing"
 )
 
 func writeTestIndexDB(t *testing.T, dbPath string, version int64, path string, line int, commentHash string, embedding []float32) string {
@@ -25,8 +26,15 @@ func writeTestIndexDB(t *testing.T, dbPath string, version int64, path string, l
 	if err := store.AddEmbedding(ctx, commentHash, embedding); err != nil {
 		t.Fatalf("AddEmbedding() error: %v", err)
 	}
-	if err := store.UpsertComment(ctx, path, line, commentHash, version); err != nil {
-		t.Fatalf("UpsertComment() error: %v", err)
+	if err := store.UpsertSymbol(ctx, path, indexing.IndexedSymbol{
+		Line:          line,
+		Kind:          "function",
+		Name:          "TestSymbol",
+		QualifiedName: "TestSymbol",
+		Signature:     "func TestSymbol()",
+		Documentation: "test symbol",
+	}, commentHash, version); err != nil {
+		t.Fatalf("UpsertSymbol() error: %v", err)
 	}
 	if err := store.ActivateVersion(ctx, version); err != nil {
 		t.Fatalf("ActivateVersion() error: %v", err)

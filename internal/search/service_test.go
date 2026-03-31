@@ -92,17 +92,31 @@ func TestExpandQueryTokenIncludesSynonyms(t *testing.T) {
 func TestLexicalMatchScore(t *testing.T) {
 	t.Parallel()
 
-	databaseScore := lexicalMatchScore("database", "internal/repository.go", "SQLite repository schema")
+	databaseScore := lexicalMatchScore("database", SearchResult{
+		Path:          "internal/repository.go",
+		Kind:          "type",
+		Name:          "SQLiteStore",
+		Documentation: "SQLite repository schema",
+	})
 	if databaseScore <= 0 {
 		t.Fatalf("expected positive score for database synonym match, got %f", databaseScore)
 	}
 
-	runCLIScore := lexicalMatchScore("RunCLI", "internal/cli.go", "RunCLI dispatches search subcommand")
+	runCLIScore := lexicalMatchScore("RunCLI", SearchResult{
+		Path:          "internal/cli.go",
+		Kind:          "function",
+		Name:          "RunCLI",
+		QualifiedName: "RunCLI",
+		Documentation: "RunCLI dispatches search subcommand",
+	})
 	if runCLIScore <= 0 {
 		t.Fatalf("expected positive score for exact lexical match, got %f", runCLIScore)
 	}
 
-	noiseScore := lexicalMatchScore("hui", "internal/repository.go", "SQLite repository schema")
+	noiseScore := lexicalMatchScore("hui", SearchResult{
+		Path:          "internal/repository.go",
+		Documentation: "SQLite repository schema",
+	})
 	if noiseScore != 0 {
 		t.Fatalf("expected zero score for unrelated text, got %f", noiseScore)
 	}

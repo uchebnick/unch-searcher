@@ -15,7 +15,7 @@ func (m mockRepo) SearchCurrent(ctx context.Context, queryEmbedding []float32, l
 	return m.semantic, nil
 }
 
-func (m mockRepo) ListCurrentComments(ctx context.Context) ([]SearchResult, error) {
+func (m mockRepo) ListCurrentSymbols(ctx context.Context) ([]SearchResult, error) {
 	return m.lexical, nil
 }
 
@@ -30,31 +30,18 @@ func (m mockEmbedder) EmbedQuery(text string) ([]float32, error) {
 	return []float32{1, 2, 3}, nil
 }
 
-type mockScanner struct {
-	texts map[int]string
-}
-
-func (m mockScanner) ReadSearchResultContent(path string, line int, commentPrefix string, contextPrefix string) (string, string, error) {
-	return m.texts[line], "", nil
-}
-
 func TestServiceRunSemanticMode(t *testing.T) {
 	t.Parallel()
 
 	service := Service{
 		Repo: mockRepo{
 			semantic: []SearchResult{
-				{Path: "b.go", Line: 20, Distance: 0.91},
-				{Path: "a.go", Line: 10, Distance: 0.30},
-				{Path: "c.go", Line: 30, Distance: 0.50},
+				{Path: "b.go", Line: 20, Name: "TooFar", Documentation: "too far", Distance: 0.91},
+				{Path: "a.go", Line: 10, Name: "Best", Documentation: "best match", Distance: 0.30},
+				{Path: "c.go", Line: 30, Name: "Second", Documentation: "second match", Distance: 0.50},
 			},
 		},
 		Embedder: mockEmbedder{},
-		Scanner: mockScanner{texts: map[int]string{
-			10: "best match",
-			20: "too far",
-			30: "second match",
-		}},
 	}
 
 	results, err := service.Run(context.Background(), Params{
@@ -81,15 +68,11 @@ func TestServiceRunAutoFallsBackToLexical(t *testing.T) {
 		Repo: mockRepo{
 			semantic: nil,
 			lexical: []SearchResult{
-				{Path: "cli.go", Line: 1},
-				{Path: "search.go", Line: 2},
+				{Path: "cli.go", Line: 1, Name: "RunCLI", Documentation: "RunCLI dispatches search"},
+				{Path: "search.go", Line: 2, Documentation: "semantic search entrypoint"},
 			},
 		},
 		Embedder: mockEmbedder{},
-		Scanner: mockScanner{texts: map[int]string{
-			1: "RunCLI dispatches search",
-			2: "semantic search entrypoint",
-		}},
 	}
 
 	results, err := service.Run(context.Background(), Params{
@@ -111,7 +94,6 @@ func TestServiceRunPropagatesEmbedErrors(t *testing.T) {
 	service := Service{
 		Repo:     mockRepo{},
 		Embedder: mockEmbedder{err: errors.New("boom")},
-		Scanner:  mockScanner{},
 	}
 
 	if _, err := service.Run(context.Background(), Params{

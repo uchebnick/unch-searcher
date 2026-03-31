@@ -25,14 +25,22 @@ func LogicalHash(ctx context.Context, dbPath string) (string, error) {
 	rows, err := db.QueryContext(
 		ctx,
 		`SELECT
-			c.path,
-			c.line,
-			c.comment_hash,
+			s.path,
+			s.line,
+			s.symbol_id,
+			s.symbol_kind,
+			s.symbol_name,
+			s.symbol_container,
+			s.qualified_name,
+			s.signature,
+			s.documentation,
+			s.body,
+			s.embedding_hash,
 			e.embedding
-		FROM comments c
-		JOIN embeddings e ON e.comment_hash = c.comment_hash
-		WHERE c.version = (SELECT value FROM meta WHERE key = 'current_version')
-		ORDER BY c.path ASC, c.line ASC, c.comment_hash ASC`,
+		FROM symbols s
+		JOIN embeddings e ON e.comment_hash = s.embedding_hash
+		WHERE s.version = (SELECT value FROM meta WHERE key = 'current_version')
+		ORDER BY s.path ASC, s.line ASC, s.symbol_id ASC`,
 	)
 	if err != nil {
 		return "", fmt.Errorf("query logical hash rows: %w", err)
@@ -40,20 +48,49 @@ func LogicalHash(ctx context.Context, dbPath string) (string, error) {
 	defer rows.Close()
 
 	sum := sha256.New()
-	writeHashBytes(sum, []byte("semsearch-logical-index-v1"))
+	writeHashBytes(sum, []byte("semsearch-logical-index-v2"))
 
 	for rows.Next() {
 		var path string
 		var line int64
-		var commentHash string
+		var symbolID string
+		var kind string
+		var name string
+		var container string
+		var qualifiedName string
+		var signature string
+		var documentation string
+		var body string
+		var embeddingHash string
 		var embedding []byte
-		if err := rows.Scan(&path, &line, &commentHash, &embedding); err != nil {
+		if err := rows.Scan(
+			&path,
+			&line,
+			&symbolID,
+			&kind,
+			&name,
+			&container,
+			&qualifiedName,
+			&signature,
+			&documentation,
+			&body,
+			&embeddingHash,
+			&embedding,
+		); err != nil {
 			return "", fmt.Errorf("scan logical hash row: %w", err)
 		}
 
 		writeHashString(sum, path)
 		writeHashInt64(sum, line)
-		writeHashString(sum, commentHash)
+		writeHashString(sum, symbolID)
+		writeHashString(sum, kind)
+		writeHashString(sum, name)
+		writeHashString(sum, container)
+		writeHashString(sum, qualifiedName)
+		writeHashString(sum, signature)
+		writeHashString(sum, documentation)
+		writeHashString(sum, body)
+		writeHashString(sum, embeddingHash)
 		writeHashBytes(sum, embedding)
 	}
 	if err := rows.Err(); err != nil {
