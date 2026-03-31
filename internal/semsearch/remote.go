@@ -28,6 +28,7 @@ const (
 
 var (
 	ErrRemoteIndexNotPublished = errors.New("remote index is not published yet; run the searcher GitHub Actions workflow once to publish it")
+	ErrRemoteIndexIncompatible = errors.New("remote index uses an incompatible schema; rerun the searcher GitHub Actions workflow to publish a compatible index")
 	gitHubContentBaseURL       = defaultGitHubContentBaseURL
 	remoteManifestHTTPClient   = &http.Client{Timeout: 20 * time.Second}
 )
@@ -210,6 +211,18 @@ func SyncRemoteIndex(ctx context.Context, localDir string) (RemoteSyncResult, er
 	}
 
 	if err := downloadPublishedIndex(ctx, workflow, dbPath, remoteManifest.IndexingHash); err != nil {
+		if errors.Is(err, ErrRemoteIndexIncompatible) {
+			if dbExists {
+				return RemoteSyncResult{
+					Checked:  true,
+					Manifest: manifest,
+					Note:     "Published remote index uses an older schema; using the local cache until the searcher workflow republishes it",
+				}, nil
+			}
+			if err := WriteManifest(localDir, remoteManifest); err != nil {
+				return RemoteSyncResult{}, fmt.Errorf("write refreshed manifest after incompatible remote index: %w", err)
+			}
+		}
 		return RemoteSyncResult{}, fmt.Errorf("download remote index: %w", err)
 	}
 	if err := WriteManifest(localDir, remoteManifest); err != nil {
@@ -282,6 +295,9 @@ func downloadPublishedIndex(ctx context.Context, workflow GitHubWorkflowRef, des
 		gotHash, err := indexdb.LogicalHash(ctx, tmpPath)
 		if err != nil {
 			_ = os.Remove(tmpPath)
+			if errors.Is(err, indexdb.ErrIncompatibleSchema) {
+				return fmt.Errorf("%w: %v", ErrRemoteIndexIncompatible, err)
+			}
 			return fmt.Errorf("hash %s: %w", tmpPath, err)
 		}
 		if gotHash != expectedHash {

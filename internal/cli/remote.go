@@ -33,7 +33,7 @@ func runRemoteSync(ctx context.Context, program string, args []string) error {
 	fs.SetOutput(nil)
 
 	rootFlag := fs.String("root", ".", "root directory whose remote search index should be refreshed")
-	allowMissing := fs.Bool("allow-missing", false, "treat an unpublished remote index as a non-fatal condition")
+	allowMissing := fs.Bool("allow-missing", false, "continue when the published remote index is unavailable or incompatible")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -55,9 +55,15 @@ func runRemoteSync(ctx context.Context, program string, args []string) error {
 
 	result, err := semsearch.SyncRemoteIndex(ctx, paths.LocalDir)
 	if err != nil {
-		if *allowMissing && errors.Is(err, semsearch.ErrRemoteIndexNotPublished) {
-			_, _ = fmt.Fprintln(os.Stdout, "Remote index is not published yet; run the searcher GitHub Actions workflow once to publish it")
-			return nil
+		if *allowMissing {
+			if errors.Is(err, semsearch.ErrRemoteIndexNotPublished) {
+				_, _ = fmt.Fprintln(os.Stdout, "Remote index is not published yet; run the searcher GitHub Actions workflow once to publish it")
+				return nil
+			}
+			if errors.Is(err, semsearch.ErrRemoteIndexIncompatible) {
+				_, _ = fmt.Fprintln(os.Stdout, "Remote index uses an older schema; continuing without restore so the searcher workflow can rebuild and republish it")
+				return nil
+			}
 		}
 		return err
 	}

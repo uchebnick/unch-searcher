@@ -160,3 +160,131 @@ func TestSyncRemoteIndexFailsWhenRemoteIsMissingAndNoLocalDB(t *testing.T) {
 		t.Fatalf("SyncRemoteIndex() error = %v, want ErrRemoteIndexNotPublished", err)
 	}
 }
+
+func TestSyncRemoteIndexFailsWhenRemoteSchemaIsIncompatibleAndNoLocalDB(t *testing.T) {
+	localDir := t.TempDir()
+	ciURL := "https://github.com/acme/widgets/actions/workflows/searcher.yml"
+	if _, err := BindRemoteManifest(localDir, ciURL); err != nil {
+		t.Fatalf("BindRemoteManifest() error: %v", err)
+	}
+
+	legacyDBPath := filepath.Join(t.TempDir(), "legacy-index.db")
+	writeLegacyTestIndexDB(t, legacyDBPath, 7)
+	legacyDB := readTestIndexDBBytes(t, legacyDBPath)
+	remoteManifest := Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		Version:       7,
+		IndexingHash:  "legacy-hash",
+		Source:        "remote",
+		Remote:        &Remote{CIURL: ciURL},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/acme/widgets/gh-pages/semsearch/manifest.json":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(remoteManifest)
+		case "/acme/widgets/gh-pages/semsearch/index.db":
+			_, _ = w.Write(legacyDB)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	originalBaseURL := gitHubContentBaseURL
+	originalClient := remoteManifestHTTPClient
+	gitHubContentBaseURL = server.URL
+	remoteManifestHTTPClient = server.Client()
+	t.Cleanup(func() {
+		gitHubContentBaseURL = originalBaseURL
+		remoteManifestHTTPClient = originalClient
+	})
+
+	_, err := SyncRemoteIndex(context.Background(), localDir)
+	if err == nil || !errors.Is(err, ErrRemoteIndexIncompatible) {
+		t.Fatalf("SyncRemoteIndex() error = %v, want ErrRemoteIndexIncompatible", err)
+	}
+
+	reloaded, readErr := ReadManifest(localDir)
+	if readErr != nil {
+		t.Fatalf("ReadManifest() error: %v", readErr)
+	}
+	if reloaded.Version != 7 {
+		t.Fatalf("ReadManifest().Version = %d, want 7", reloaded.Version)
+	}
+	if fileExists(filepath.Join(localDir, "index.db")) {
+		t.Fatalf("expected no local index.db to be activated after incompatible remote schema")
+	}
+}
+
+func TestSyncRemoteIndexSeedsNextCIVersion(t *testing.T) {
+	localDir := t.TempDir()
+	ciURL := "https://github.com/acme/widgets/actions/workflows/searcher.yml"
+	if _, err := BindRemoteManifest(localDir, ciURL); err != nil {
+		t.Fatalf("BindRemoteManifest() error: %v", err)
+	}
+
+	remoteDBPath := filepath.Join(t.TempDir(), "remote-index.db")
+	remoteHash := writeTestIndexDB(t, remoteDBPath, 7, "/tmp/remote.go", 20, "hash7", []float32{7, 7, 7})
+	remoteDB := readTestIndexDBBytes(t, remoteDBPath)
+	remoteManifest := Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		Version:       7,
+		IndexingHash:  remoteHash,
+		Source:        "remote",
+		Remote:        &Remote{CIURL: ciURL},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/acme/widgets/gh-pages/semsearch/manifest.json":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(remoteManifest)
+		case "/acme/widgets/gh-pages/semsearch/index.db":
+			_, _ = w.Write(remoteDB)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	originalBaseURL := gitHubContentBaseURL
+	originalClient := remoteManifestHTTPClient
+	gitHubContentBaseURL = server.URL
+	remoteManifestHTTPClient = server.Client()
+	t.Cleanup(func() {
+		gitHubContentBaseURL = originalBaseURL
+		remoteManifestHTTPClient = originalClient
+	})
+
+	if _, err := SyncRemoteIndex(context.Background(), localDir); err != nil {
+		t.Fatalf("SyncRemoteIndex() error: %v", err)
+	}
+
+	dbPath := filepath.Join(localDir, "index.db")
+	manifestAfterIndex, err := UpdateIndexManifest(localDir, dbPath, 123)
+	if err != nil {
+		t.Fatalf("UpdateIndexManifest() error: %v", err)
+	}
+	if manifestAfterIndex.Version != 8 {
+		t.Fatalf("manifestAfterIndex.Version = %d, want 8", manifestAfterIndex.Version)
+	}
+	if manifestAfterIndex.Source != "local" {
+		t.Fatalf("manifestAfterIndex.Source = %q, want local", manifestAfterIndex.Source)
+	}
+
+	manifestAfterBind, err := BindRemoteManifest(localDir, ciURL)
+	if err != nil {
+		t.Fatalf("BindRemoteManifest(second call) error: %v", err)
+	}
+	if manifestAfterBind.Version != 8 {
+		t.Fatalf("manifestAfterBind.Version = %d, want 8", manifestAfterBind.Version)
+	}
+	if manifestAfterBind.Source != "remote" {
+		t.Fatalf("manifestAfterBind.Source = %q, want remote", manifestAfterBind.Source)
+	}
+	if manifestAfterBind.Remote == nil || manifestAfterBind.Remote.CIURL != ciURL {
+		t.Fatalf("manifestAfterBind.Remote = %+v", manifestAfterBind.Remote)
+	}
+}

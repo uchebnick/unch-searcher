@@ -2,6 +2,8 @@ package indexdb
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -143,5 +145,44 @@ func TestLogicalHashIgnoresCurrentVersionMetadata(t *testing.T) {
 
 	if firstHash != secondHash {
 		t.Fatalf("LogicalHash() changed after version-only update: first=%s second=%s", firstHash, secondHash)
+	}
+}
+
+func TestLogicalHashRejectsLegacySchema(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "index.db")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer db.Close()
+
+	for _, stmt := range []string{
+		`CREATE TABLE comments (
+			path TEXT NOT NULL,
+			line INTEGER NOT NULL,
+			comment_hash TEXT NOT NULL,
+			version INTEGER NOT NULL,
+			PRIMARY KEY (path, line)
+		);`,
+		`CREATE TABLE embeddings (
+			comment_hash TEXT PRIMARY KEY,
+			embedding BLOB NOT NULL
+		);`,
+		`CREATE TABLE meta (
+			key TEXT PRIMARY KEY,
+			value INTEGER NOT NULL
+		);`,
+		`INSERT INTO meta(key, value) VALUES ('current_version', 1);`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("db.ExecContext(%q) error: %v", stmt, err)
+		}
+	}
+
+	_, err = LogicalHash(ctx, dbPath)
+	if err == nil || !errors.Is(err, ErrIncompatibleSchema) {
+		t.Fatalf("LogicalHash() error = %v, want ErrIncompatibleSchema", err)
 	}
 }
