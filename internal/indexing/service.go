@@ -84,9 +84,14 @@ func (s Service) Run(ctx context.Context, params Params, reporter Reporter) (Res
 		default:
 		}
 
-		comments, commentContext, err := s.Scanner.ExtractPrefixedBlocks(job.Path, params.CommentPrefix, params.ContextPrefix)
+		sourcePath := job.SourcePath
+		if sourcePath == "" {
+			sourcePath = job.Path
+		}
+
+		comments, commentContext, err := s.Scanner.ExtractPrefixedBlocks(sourcePath, params.CommentPrefix, params.ContextPrefix)
 		if err != nil {
-			return Result{}, fmt.Errorf("extract blocks: %w", err)
+			return Result{}, fmt.Errorf("extract blocks from %s: %w", job.Path, err)
 		}
 
 		for _, comment := range comments {

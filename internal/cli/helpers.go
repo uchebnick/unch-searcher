@@ -28,6 +28,10 @@ func (s *stringListFlag) Set(value string) error {
 }
 
 func formatSearchResultPath(root string, target string) string {
+	if !filepath.IsAbs(target) {
+		return filepath.ToSlash(filepath.Clean(target))
+	}
+
 	rel, err := filepath.Rel(root, target)
 	if err != nil {
 		return target

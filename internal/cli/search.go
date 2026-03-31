@@ -74,6 +74,7 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 	if err != nil {
 		return err
 	}
+	scanner.Root = rootAbs
 
 	remoteSync, err := semsearch.SyncRemoteIndex(ctx, targetPaths.LocalDir)
 	if err != nil {

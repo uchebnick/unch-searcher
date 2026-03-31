@@ -14,7 +14,9 @@ import (
 	ignore "github.com/sabhiram/go-gitignore"
 )
 
-type FileScanner struct{}
+type FileScanner struct {
+	Root string
+}
 
 // @search: CollectJobs walks the repository with .gitignore support, skips .git and .semsearch, and returns only files with indexable directives.
 func (FileScanner) CollectJobs(root string, gitignorePath string, extraPatterns []string, commentPrefix string, contextPrefix string) ([]FileJob, int, error) {
@@ -68,7 +70,8 @@ func (FileScanner) CollectJobs(root string, gitignorePath string, extraPatterns 
 		}
 
 		jobs = append(jobs, FileJob{
-			Path:          path,
+			Path:          rel,
+			SourcePath:    path,
 			CommentsCount: len(comments),
 		})
 		totalComments += len(comments)
@@ -81,12 +84,10 @@ func (FileScanner) CollectJobs(root string, gitignorePath string, extraPatterns 
 	return jobs, totalComments, nil
 }
 
-func (FileScanner) ExtractPrefixedBlocks(path string, searchPrefix string, ctxPrefix string) ([]IndexedComment, string, error) {
-	return ExtractPrefixedBlocks(path, searchPrefix, ctxPrefix)
-}
+func (s FileScanner) ReadSearchResultContent(path string, line int, commentPrefix string, contextPrefix string) (string, string, error) {
+	localPath := s.resolvePath(path)
 
-func (FileScanner) ReadSearchResultContent(path string, line int, commentPrefix string, contextPrefix string) (string, string, error) {
-	comments, context, err := ExtractPrefixedBlocks(path, commentPrefix, contextPrefix)
+	comments, context, err := ExtractPrefixedBlocks(localPath, commentPrefix, contextPrefix)
 	if err == nil {
 		for _, comment := range comments {
 			if comment.Line == line {
@@ -95,7 +96,7 @@ func (FileScanner) ReadSearchResultContent(path string, line int, commentPrefix 
 		}
 	}
 
-	data, readErr := os.ReadFile(path)
+	data, readErr := os.ReadFile(localPath)
 	if readErr != nil {
 		if err != nil {
 			return "", "", err
@@ -122,6 +123,18 @@ func (FileScanner) ReadSearchResultContent(path string, line int, commentPrefix 
 		return text, "", err
 	}
 	return text, strings.TrimSpace(context), nil
+}
+
+func (s FileScanner) ExtractPrefixedBlocks(path string, searchPrefix string, ctxPrefix string) ([]IndexedComment, string, error) {
+	return ExtractPrefixedBlocks(s.resolvePath(path), searchPrefix, ctxPrefix)
+}
+
+func (s FileScanner) resolvePath(path string) string {
+	path = filepath.Clean(path)
+	if filepath.IsAbs(path) || s.Root == "" {
+		return path
+	}
+	return filepath.Join(s.Root, path)
 }
 
 func ResolveGitignorePath(root string, gitignorePath ...string) (string, error) {

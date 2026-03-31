@@ -66,6 +66,15 @@ func TestExtractPrefixedBlocksAndReadContent(t *testing.T) {
 	if text != "first comment" || readCtx != "file context" {
 		t.Fatalf("ReadSearchResultContent() = (%q, %q)", text, readCtx)
 	}
+
+	relativeScanner := FileScanner{Root: dir}
+	text, readCtx, err = relativeScanner.ReadSearchResultContent("sample.go", 2, "@search:", "@filectx:")
+	if err != nil {
+		t.Fatalf("ReadSearchResultContent(relative) error: %v", err)
+	}
+	if text != "first comment" || readCtx != "file context" {
+		t.Fatalf("ReadSearchResultContent(relative) = (%q, %q)", text, readCtx)
+	}
 }
 
 func TestCollectJobsSkipsNoiseAndRespectsGitignore(t *testing.T) {
@@ -105,8 +114,11 @@ func TestCollectJobsSkipsNoiseAndRespectsGitignore(t *testing.T) {
 	if total != 1 || len(jobs) != 1 {
 		t.Fatalf("CollectJobs() = jobs=%v total=%d", jobs, total)
 	}
-	if jobs[0].Path != filepath.Join(root, "keep.go") {
-		t.Fatalf("unexpected job path %q", jobs[0].Path)
+	if jobs[0].Path != "keep.go" {
+		t.Fatalf("unexpected stored job path %q", jobs[0].Path)
+	}
+	if jobs[0].SourcePath != filepath.Join(root, "keep.go") {
+		t.Fatalf("unexpected source job path %q", jobs[0].SourcePath)
 	}
 }
 

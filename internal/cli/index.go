@@ -61,6 +61,7 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 	if err != nil {
 		return err
 	}
+	scanner.Root = rootAbs
 
 	currentManifest, err := semsearch.ReadManifest(targetPaths.LocalDir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

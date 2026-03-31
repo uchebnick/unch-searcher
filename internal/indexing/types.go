@@ -8,5 +8,6 @@ type IndexedComment struct {
 
 type FileJob struct {
 	Path          string
+	SourcePath    string
 	CommentsCount int
 }

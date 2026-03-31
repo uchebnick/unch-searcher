@@ -73,7 +73,7 @@ func TestServiceRunIndexesComments(t *testing.T) {
 	t.Parallel()
 
 	scanner := testScanner{
-		jobs: []FileJob{{Path: "/tmp/a.go", CommentsCount: 2}},
+		jobs: []FileJob{{Path: "a.go", SourcePath: "/tmp/a.go", CommentsCount: 2}},
 		comments: map[string][]IndexedComment{
 			"/tmp/a.go": {
 				{Line: 1, Text: "first", FollowingText: "func A() {}"},
@@ -84,7 +84,7 @@ func TestServiceRunIndexesComments(t *testing.T) {
 	}
 	repo := &testRepo{
 		workingVersion: 2,
-		existing:       map[string]bool{"/tmp/a.go:first": true},
+		existing:       map[string]bool{"a.go:first": true},
 	}
 	reporter := &testReporter{}
 
@@ -115,6 +115,11 @@ func TestServiceRunIndexesComments(t *testing.T) {
 	}
 	if len(repo.upserts) != 2 {
 		t.Fatalf("expected two upserts, got %v", repo.upserts)
+	}
+	for _, got := range repo.upserts {
+		if got != "a.go" {
+			t.Fatalf("expected relative upsert path, got %q", got)
+		}
 	}
 	if repo.activated != 2 || !repo.cleaned {
 		t.Fatalf("expected version activation and cleanup, got activated=%d cleaned=%v", repo.activated, repo.cleaned)
