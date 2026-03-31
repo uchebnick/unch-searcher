@@ -13,6 +13,22 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: Ignore the published snapshot and rebuild the index from scratch
+        required: false
+        default: false
+        type: boolean
+      skip_remote_restore:
+        description: Skip downloading the published snapshot before indexing
+        required: false
+        default: false
+        type: boolean
+      skip_publish:
+        description: Build the index but do not publish it back to gh-pages
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -21,6 +37,9 @@ jobs:
   index:
     name: build-search-index
     runs-on: macos-14
+    env:
+      FORCE_REBUILD: ${{ github.event.inputs.force_rebuild || 'false' }}
+      SKIP_REMOTE_RESTORE: ${{ github.event.inputs.skip_remote_restore || 'false' }}
 
     steps:
       - name: Checkout
@@ -66,7 +85,18 @@ jobs:
           cat .semsearch/manifest.json
           echo "::endgroup::"
           echo "::group::Restore published remote index"
-          unch remote sync --root . --allow-missing
+          if [ "${FORCE_REBUILD}" = "true" ]; then
+            echo "::notice::Force rebuild requested; skipping published remote index restore"
+          elif [ "${SKIP_REMOTE_RESTORE}" = "true" ]; then
+            echo "::notice::Published remote index restore skipped by workflow input"
+          else
+            unch remote sync --root . --allow-missing
+            if [ -f .semsearch/index.db ]; then
+              echo "::notice::Using the published remote index as the starting snapshot"
+            else
+              echo "::notice::No compatible published remote index was restored; building from scratch"
+            fi
+          fi
           if [ -f .semsearch/manifest.json ]; then
             cat .semsearch/manifest.json
           fi
@@ -101,44 +131,6 @@ jobs:
           cat .semsearch/manifest.json
           echo "::endgroup::"
 
-      - name: Publish remote search index
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          publish_dir="${RUNNER_TEMP}/gh-pages"
-          repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          rm -rf "$publish_dir"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git ls-remote --exit-code --heads "$repo_url" gh-pages >/dev/null 2>&1; then
-            git clone --depth 1 --branch gh-pages "$repo_url" "$publish_dir"
-          else
-            git clone --depth 1 "$repo_url" "$publish_dir"
-            (
-              cd "$publish_dir"
-              git checkout --orphan gh-pages
-              git rm -rf . >/dev/null 2>&1 || true
-            )
-          fi
-          mkdir -p "$publish_dir/semsearch"
-          cp .semsearch/index.db "$publish_dir/semsearch/index.db"
-          cp .semsearch/manifest.json "$publish_dir/semsearch/manifest.json"
-          echo "::group::Publish payload"
-          find "$publish_dir/semsearch" -maxdepth 1 -type f | sort
-          echo "::endgroup::"
-          (
-            cd "$publish_dir"
-            git add semsearch/index.db semsearch/manifest.json
-            if git diff --cached --quiet; then
-              echo "No gh-pages changes to publish."
-            else
-              git commit -m "Publish semsearch index for ${GITHUB_SHA}"
-              git push origin HEAD:gh-pages
-            fi
-          )
-
       - name: Render GitHub summary
         if: ${{ always() }}
         shell: bash
@@ -150,16 +142,6 @@ jobs:
             echo "- Repository: <code>${GITHUB_REPOSITORY}</code>"
             echo "- Ref: <code>${GITHUB_REF_NAME}</code>"
             echo "- Commit: <code>${GITHUB_SHA::7}</code>"
-            echo
-            echo "### Artifact contents"
-            echo
-            echo '<pre>'
-            if [ -d .semsearch ]; then
-              find .semsearch -maxdepth 2 -type f | sort
-            else
-              echo "No .semsearch directory was generated."
-            fi
-            echo '</pre>'
             echo
             echo "### Manifest"
             echo
@@ -190,6 +172,58 @@ jobs:
             .semsearch/manifest.json
             .semsearch/logs/
           if-no-files-found: warn
+
+  publish:
+    name: publish-search-index
+    runs-on: ubuntu-latest
+    needs: index
+    if: ${{ needs.index.result == 'success' && github.event.inputs.skip_publish != 'true' }}
+
+    steps:
+      - name: Download search index artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: semsearch-index
+          path: semsearch-artifact
+
+      - name: Publish remote search index
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish_dir="${RUNNER_TEMP}/gh-pages"
+          repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          artifact_dir="${PWD}/semsearch-artifact"
+          rm -rf "$publish_dir"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads "$repo_url" gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --branch gh-pages "$repo_url" "$publish_dir"
+          else
+            git clone --depth 1 "$repo_url" "$publish_dir"
+            (
+              cd "$publish_dir"
+              git checkout --orphan gh-pages
+              git rm -rf . >/dev/null 2>&1 || true
+            )
+          fi
+          mkdir -p "$publish_dir/semsearch"
+          cp "$artifact_dir/index.db" "$publish_dir/semsearch/index.db"
+          cp "$artifact_dir/manifest.json" "$publish_dir/semsearch/manifest.json"
+          echo "::group::Publish payload"
+          find "$publish_dir/semsearch" -maxdepth 1 -type f | sort
+          echo "::endgroup::"
+          (
+            cd "$publish_dir"
+            git add semsearch/index.db semsearch/manifest.json
+            if git diff --cached --quiet; then
+              echo "No gh-pages changes to publish."
+            else
+              git commit -m "Publish semsearch index for ${GITHUB_SHA}"
+              git push origin HEAD:gh-pages
+            fi
+          )
 `
 
 // CIWorkflowPath returns the generated workflow location under .github/workflows.

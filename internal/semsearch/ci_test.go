@@ -34,6 +34,12 @@ func TestEnsureCIWorkflow(t *testing.T) {
 	if !strings.Contains(content, "GITHUB_STEP_SUMMARY") {
 		t.Fatalf("workflow missing GitHub summary step")
 	}
+	if !strings.Contains(content, "workflow_dispatch:\n    inputs:") {
+		t.Fatalf("workflow missing workflow_dispatch inputs")
+	}
+	if !strings.Contains(content, "force_rebuild:") || !strings.Contains(content, "skip_remote_restore:") || !strings.Contains(content, "skip_publish:") {
+		t.Fatalf("workflow missing manual dispatch controls")
+	}
 	if !strings.Contains(content, "export PATH=\"$bin_dir:$PATH\"") {
 		t.Fatalf("workflow missing immediate PATH export")
 	}
@@ -55,11 +61,26 @@ func TestEnsureCIWorkflow(t *testing.T) {
 	if !strings.Contains(content, "unch remote sync --root . --allow-missing") {
 		t.Fatalf("workflow missing remote sync step")
 	}
+	if !strings.Contains(content, "uses: actions/download-artifact@v4") {
+		t.Fatalf("workflow missing publish job artifact download step")
+	}
+	if !strings.Contains(content, "needs: index") {
+		t.Fatalf("workflow missing publish job dependency on index")
+	}
+	if !strings.Contains(content, "runs-on: ubuntu-latest") {
+		t.Fatalf("workflow missing dedicated publish job runner")
+	}
+	if !strings.Contains(content, "No compatible published remote index was restored; building from scratch") {
+		t.Fatalf("workflow missing explicit rebuild notice when no compatible snapshot is restored")
+	}
 	if !strings.Contains(content, "git push origin HEAD:gh-pages") {
 		t.Fatalf("workflow missing gh-pages publish step")
 	}
 	if !strings.Contains(content, "if-no-files-found: warn") {
 		t.Fatalf("workflow missing artifact warning mode")
+	}
+	if strings.Contains(content, "### Artifact contents") {
+		t.Fatalf("workflow summary should not include artifact contents section")
 	}
 	if !strings.Contains(content, ".github/workflows") && !strings.HasSuffix(path, "searcher.yml") {
 		t.Fatalf("unexpected workflow path: %s", path)
