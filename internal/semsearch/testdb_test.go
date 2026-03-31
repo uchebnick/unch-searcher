@@ -2,9 +2,11 @@ package semsearch
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"testing"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/uchebnick/unch-searcher/internal/indexdb"
 	"github.com/uchebnick/unch-searcher/internal/indexing"
 )
@@ -55,4 +57,51 @@ func readTestIndexDBBytes(t *testing.T, dbPath string) []byte {
 		t.Fatalf("os.ReadFile(%s) error: %v", dbPath, err)
 	}
 	return data
+}
+
+func writeLegacyTestIndexDB(t *testing.T, dbPath string, version int64) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close() error: %v", err)
+		}
+	}()
+
+	for _, stmt := range []string{
+		`CREATE TABLE comments (
+			path TEXT NOT NULL,
+			line INTEGER NOT NULL,
+			comment_hash TEXT NOT NULL,
+			version INTEGER NOT NULL,
+			PRIMARY KEY (path, line)
+		);`,
+		`CREATE TABLE embeddings (
+			comment_hash TEXT PRIMARY KEY,
+			embedding BLOB NOT NULL
+		);`,
+		`CREATE TABLE meta (
+			key TEXT PRIMARY KEY,
+			value INTEGER NOT NULL
+		);`,
+		`INSERT INTO meta(key, value) VALUES ('current_version', ?);`,
+		`INSERT INTO embeddings(comment_hash, embedding) VALUES ('legacy-hash', X'000000');`,
+		`INSERT INTO comments(path, line, comment_hash, version) VALUES ('legacy.go', 10, 'legacy-hash', ?);`,
+	} {
+		switch stmt {
+		case `INSERT INTO meta(key, value) VALUES ('current_version', ?);`,
+			`INSERT INTO comments(path, line, comment_hash, version) VALUES ('legacy.go', 10, 'legacy-hash', ?);`:
+			if _, err := db.Exec(stmt, version); err != nil {
+				t.Fatalf("db.Exec(%q) error: %v", stmt, err)
+			}
+		default:
+			if _, err := db.Exec(stmt); err != nil {
+				t.Fatalf("db.Exec(%q) error: %v", stmt, err)
+			}
+		}
+	}
 }

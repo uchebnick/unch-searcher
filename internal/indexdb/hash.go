@@ -6,12 +6,16 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
+	"strings"
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 	_ "github.com/mattn/go-sqlite3"
 )
+
+var ErrIncompatibleSchema = errors.New("incompatible index schema")
 
 // LogicalHash computes a stable hash of the active logical index contents,
 // ignoring SQLite file layout and other storage-level noise.
@@ -23,6 +27,10 @@ func LogicalHash(ctx context.Context, dbPath string) (string, error) {
 		return "", fmt.Errorf("open db: %w", err)
 	}
 	defer db.Close()
+
+	if err := ensureLogicalHashSchema(ctx, db); err != nil {
+		return "", err
+	}
 
 	rows, err := db.QueryContext(
 		ctx,
@@ -45,6 +53,9 @@ func LogicalHash(ctx context.Context, dbPath string) (string, error) {
 		ORDER BY s.path ASC, s.line ASC, s.symbol_id ASC`,
 	)
 	if err != nil {
+		if isSchemaQueryError(err) {
+			return "", fmt.Errorf("%w: %v", ErrIncompatibleSchema, err)
+		}
 		return "", fmt.Errorf("query logical hash rows: %w", err)
 	}
 	defer rows.Close()
@@ -100,6 +111,53 @@ func LogicalHash(ctx context.Context, dbPath string) (string, error) {
 	}
 
 	return hex.EncodeToString(sum.Sum(nil)), nil
+}
+
+func ensureLogicalHashSchema(ctx context.Context, db *sql.DB) error {
+	requiredTables := []string{"symbols", "embeddings", "meta"}
+	rows, err := db.QueryContext(
+		ctx,
+		`SELECT name
+		FROM sqlite_master
+		WHERE type = 'table' AND name IN ('symbols', 'embeddings', 'meta')
+		ORDER BY name ASC`,
+	)
+	if err != nil {
+		return fmt.Errorf("inspect logical hash schema: %w", err)
+	}
+	defer rows.Close()
+
+	present := make(map[string]bool, len(requiredTables))
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("scan logical hash schema: %w", err)
+		}
+		present[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate logical hash schema: %w", err)
+	}
+
+	var missing []string
+	for _, name := range requiredTables {
+		if !present[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: missing tables %s", ErrIncompatibleSchema, strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+func isSchemaQueryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no such table") || strings.Contains(message, "no such column")
 }
 
 func writeHashString(sum hash.Hash, value string) {
