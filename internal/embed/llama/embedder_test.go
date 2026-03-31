@@ -3,23 +3,35 @@ package llamaembed
 import (
 	"strings"
 	"testing"
+
+	"github.com/uchebnick/unch-searcher/internal/indexing"
 )
 
-func TestFormatIndexedCommentDocumentIncludesContextAndFollowingCode(t *testing.T) {
+func TestFormatIndexedSymbolDocumentIncludesMetadataAndBody(t *testing.T) {
 	t.Parallel()
 
-	doc := formatIndexedCommentDocument(
+	doc := formatIndexedSymbolDocument(
 		"/tmp/internal/model_cache.go",
-		"the default embedding model is downloaded once into the user cache",
-		"Global GGUF model cache with auto-download",
-		"func resolveOrInstallModelPath() {}\nfunc installDefaultEmbeddingModel() {}",
+		indexing.IndexedSymbol{
+			Kind:          "function",
+			Name:          "ResolveOrInstallModelPath",
+			QualifiedName: "ModelCache.ResolveOrInstallModelPath",
+			Signature:     "func ResolveOrInstallModelPath() string",
+			Documentation: "the default embedding model is downloaded once into the user cache",
+			FileContext:   "Global GGUF model cache with auto-download",
+			Body:          "func resolveOrInstallModelPath() {}\nfunc installDefaultEmbeddingModel() {}",
+		},
 	)
 
 	for _, want := range []string{
-		"title: model_cache.go",
-		"Comment: the default embedding model is downloaded once into the user cache",
-		"Context: Global GGUF model cache with auto-download",
-		"Following code:\nfunc resolveOrInstallModelPath() {}\nfunc installDefaultEmbeddingModel() {}",
+		"title: model_cache.go ModelCache.ResolveOrInstallModelPath",
+		"Kind: function",
+		"Name: ResolveOrInstallModelPath",
+		"Qualified name: ModelCache.ResolveOrInstallModelPath",
+		"Signature:\nfunc ResolveOrInstallModelPath() string",
+		"Documentation:\nthe default embedding model is downloaded once into the user cache",
+		"File context:\nGlobal GGUF model cache with auto-download",
+		"Body snippet:\nfunc resolveOrInstallModelPath() {}\nfunc installDefaultEmbeddingModel() {}",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("formatted document is missing %q in %q", want, doc)

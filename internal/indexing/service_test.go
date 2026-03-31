@@ -6,21 +6,15 @@ import (
 )
 
 type testScanner struct {
-	jobs     []FileJob
-	comments map[string][]IndexedComment
-	contexts map[string]string
+	jobs []FileJob
 }
 
 func (s testScanner) CollectJobs(root string, gitignorePath string, extraPatterns []string, commentPrefix string, contextPrefix string) ([]FileJob, int, error) {
 	total := 0
 	for _, job := range s.jobs {
-		total += job.CommentsCount
+		total += len(job.Symbols)
 	}
 	return s.jobs, total, nil
-}
-
-func (s testScanner) ExtractPrefixedBlocks(path string, searchPrefix string, ctxPrefix string) ([]IndexedComment, string, error) {
-	return s.comments[path], s.contexts[path], nil
 }
 
 type testRepo struct {
@@ -44,7 +38,7 @@ func (r *testRepo) AddEmbedding(ctx context.Context, commentHash string, embeddi
 	r.added = append(r.added, commentHash)
 	return nil
 }
-func (r *testRepo) UpsertComment(ctx context.Context, path string, line int, commentHash string, version int64) error {
+func (r *testRepo) UpsertSymbol(ctx context.Context, path string, symbol IndexedSymbol, commentHash string, version int64) error {
 	r.upserts = append(r.upserts, path)
 	return nil
 }
@@ -56,8 +50,8 @@ func (r *testRepo) CleanupUnusedEmbeddings(ctx context.Context) error { return n
 
 type testEmbedder struct{}
 
-func (testEmbedder) EmbedIndexedComment(path string, comment string, commentContext string, followingText string) (string, []float32, error) {
-	return path + ":" + comment, []float32{1, 2, 3}, nil
+func (testEmbedder) EmbedIndexedSymbol(path string, symbol IndexedSymbol) (string, []float32, error) {
+	return path + ":" + symbol.QualifiedName, []float32{1, 2, 3}, nil
 }
 
 type testReporter struct {
@@ -73,18 +67,14 @@ func TestServiceRunIndexesComments(t *testing.T) {
 	t.Parallel()
 
 	scanner := testScanner{
-		jobs: []FileJob{{Path: "a.go", SourcePath: "/tmp/a.go", CommentsCount: 2}},
-		comments: map[string][]IndexedComment{
-			"/tmp/a.go": {
-				{Line: 1, Text: "first", FollowingText: "func A() {}"},
-				{Line: 2, Text: "second", FollowingText: "func B() {}"},
-			},
-		},
-		contexts: map[string]string{"/tmp/a.go": "context"},
+		jobs: []FileJob{{Path: "a.go", SourcePath: "/tmp/a.go", Symbols: []IndexedSymbol{
+			{Line: 1, Kind: "function", Name: "First", QualifiedName: "First", Documentation: "first", Body: "func A() {}", FileContext: "context"},
+			{Line: 2, Kind: "function", Name: "Second", QualifiedName: "Second", Documentation: "second", Body: "func B() {}", FileContext: "context"},
+		}}},
 	}
 	repo := &testRepo{
 		workingVersion: 2,
-		existing:       map[string]bool{"a.go:first": true},
+		existing:       map[string]bool{"a.go:First": true},
 	}
 	reporter := &testReporter{}
 
@@ -104,7 +94,7 @@ func TestServiceRunIndexesComments(t *testing.T) {
 		t.Fatalf("Service.Run() error: %v", err)
 	}
 
-	if result.IndexedFiles != 1 || result.IndexedComments != 2 {
+	if result.IndexedFiles != 1 || result.IndexedSymbols != 2 {
 		t.Fatalf("Service.Run() result = %+v", result)
 	}
 	if result.Version != 2 {
@@ -137,7 +127,7 @@ func TestServiceRunHonorsContextCancellation(t *testing.T) {
 
 	service := Service{
 		Scanner: testScanner{
-			jobs: []FileJob{{Path: "/tmp/a.go", CommentsCount: 1}},
+			jobs: []FileJob{{Path: "/tmp/a.go", Symbols: []IndexedSymbol{{Line: 1, Kind: "function", Name: "A", QualifiedName: "A"}}}},
 		},
 		Repo:     &testRepo{workingVersion: 1, existing: map[string]bool{}},
 		Embedder: testEmbedder{},

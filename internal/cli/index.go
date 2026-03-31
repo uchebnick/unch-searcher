@@ -29,8 +29,8 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 	dbPath := fs.String("db", defaultDBPath, "path to sqlite db")
 	modelPath := fs.String("model", defaultModelPath, "path to GGUF embedding model")
 	libPath := fs.String("lib", "", "path to yzma library directory, or to one of its shared library files")
-	contextPrefix := fs.String("context-prefix", "@filectx:", "file context prefix")
-	commentPrefix := fs.String("comment-prefix", "@search:", "comment prefix")
+	contextPrefix := fs.String("context-prefix", "@filectx:", "legacy file context prefix used only by fallback indexers")
+	commentPrefix := fs.String("comment-prefix", "@search:", "legacy comment prefix used only by fallback indexers")
 	gitignorePath := fs.String("gitignore", "", "optional path to .gitignore; default is <root>/.gitignore")
 	contextSize := fs.Int("ctx-size", 2048, "llama context size")
 	batchSize := fs.Int("batch-size", 2048, "llama batch size")
@@ -151,11 +151,11 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 	}
 	s.Logf("manifest version=%d indexing_hash=%s", manifest.Version, manifest.IndexingHash)
 
-	if result.IndexedComments == 0 {
-		s.Finish("No comments found")
+	if result.IndexedSymbols == 0 {
+		s.Finish("No symbols found")
 		return nil
 	}
 
-	s.Finish(fmt.Sprintf("Indexed %d comments in %d files", result.IndexedComments, result.IndexedFiles))
+	s.Finish(fmt.Sprintf("Indexed %d symbols in %d files", result.IndexedSymbols, result.IndexedFiles))
 	return nil
 }
