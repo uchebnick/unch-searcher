@@ -38,13 +38,13 @@ func TestEnsureCIWorkflow(t *testing.T) {
 	if !strings.Contains(content, "force_rebuild:") || !strings.Contains(content, "skip_remote_restore:") || !strings.Contains(content, "skip_publish:") {
 		t.Fatalf("workflow missing manual dispatch controls")
 	}
-	if !strings.Contains(content, "uses: uchebnick/unch/.github/workflows/searcher-reusable.yml@v0.2.1") {
+	if !strings.Contains(content, "uses: uchebnick/unch/.github/workflows/searcher-reusable.yml@v0.2.2") {
 		t.Fatalf("workflow missing reusable workflow reference")
 	}
 	if !strings.Contains(content, "unch_repository: uchebnick/unch") {
 		t.Fatalf("workflow missing pinned reusable repository")
 	}
-	if !strings.Contains(content, "unch_ref: v0.2.1") {
+	if !strings.Contains(content, "unch_ref: v0.2.2") {
 		t.Fatalf("workflow missing pinned reusable ref")
 	}
 	if !strings.Contains(content, "secrets: inherit") {

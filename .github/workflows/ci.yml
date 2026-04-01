@@ -12,7 +12,7 @@ permissions:
 jobs:
   test:
     name: test-and-coverage
-    runs-on: macos-14
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -108,10 +108,9 @@ jobs:
 
   benchmark:
     name: benchmark-suite
-    runs-on: macos-14
+    runs-on: ubuntu-latest
 
     env:
-      SEMSEARCH_YZMA_PROCESSOR: cpu
       SEMSEARCH_YZMA_VERSION: b8581
       UNCH_BENCH_ROOT: ${{ github.workspace }}/.bench-cache
 

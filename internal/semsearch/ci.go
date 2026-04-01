@@ -10,7 +10,7 @@ const (
 	// DefaultCIWorkflowRepository is the upstream repository that hosts the reusable searcher workflow.
 	DefaultCIWorkflowRepository = "uchebnick/unch"
 	// DefaultCIWorkflowRef pins generated workflows to the matching reusable workflow release.
-	DefaultCIWorkflowRef = "v0.2.1"
+	DefaultCIWorkflowRef = "v0.2.2"
 )
 
 const defaultCIWorkflowTemplate = `name: searcher
@@ -130,7 +130,7 @@ on:
       unch_ref:
         description: Git ref from the unch repository used to build the CLI
         required: false
-        default: v0.2.1
+        default: v0.2.2
         type: string
 
 permissions:
@@ -139,7 +139,7 @@ permissions:
 jobs:
   index:
     name: build-search-index
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     env:
       FORCE_REBUILD: ${{ inputs.force_rebuild && 'true' || 'false' }}
       SKIP_REMOTE_RESTORE: ${{ inputs.skip_remote_restore && 'true' || 'false' }}
@@ -219,7 +219,6 @@ jobs:
       - name: Build local search index
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          SEMSEARCH_YZMA_PROCESSOR: cpu
           SEMSEARCH_YZMA_VERSION: b8581
         shell: bash
         run: |
