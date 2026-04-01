@@ -207,8 +207,6 @@ jobs:
           repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           artifact_dir="${PWD}/semsearch-artifact"
           rm -rf "$publish_dir"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git ls-remote --exit-code --heads "$repo_url" gh-pages >/dev/null 2>&1; then
             git clone --depth 1 --branch gh-pages "$repo_url" "$publish_dir"
           else
@@ -227,6 +225,8 @@ jobs:
           echo "::endgroup::"
           (
             cd "$publish_dir"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add semsearch/index.db semsearch/manifest.json
             if git diff --cached --quiet; then
               echo "No gh-pages changes to publish."
