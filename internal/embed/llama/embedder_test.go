@@ -10,7 +10,7 @@ import (
 func TestFormatIndexedSymbolDocumentIncludesMetadataAndBody(t *testing.T) {
 	t.Parallel()
 
-	doc := formatIndexedSymbolDocument(
+	doc := embeddingGemmaModel{}.FormatIndexedSymbolDocument(
 		"/tmp/internal/model_cache.go",
 		indexing.IndexedSymbol{
 			Kind:          "function",
@@ -42,21 +42,77 @@ func TestFormatIndexedSymbolDocumentIncludesMetadataAndBody(t *testing.T) {
 func TestFormatEmbeddingGemmaQuery(t *testing.T) {
 	t.Parallel()
 
-	got := formatEmbeddingGemmaQuery("global model cache")
+	got := embeddingGemmaModel{}.FormatQuery("global model cache")
 	want := "task: code retrieval | query: global model cache"
 	if got != want {
 		t.Fatalf("formatEmbeddingGemmaQuery() = %q, want %q", got, want)
 	}
 }
 
-func TestNormalizeEmbeddingGemmaTitle(t *testing.T) {
+func TestFormatQwen3Query(t *testing.T) {
 	t.Parallel()
 
-	if got := normalizeEmbeddingGemmaTitle("internal/model|cache.go"); got != "internal/model/cache.go" {
-		t.Fatalf("normalizeEmbeddingGemmaTitle() = %q", got)
+	got := formatQwen3Query(qwen3CodeRetrievalInstruction, "global model cache")
+	want := "Instruct: Given a code search query, retrieve relevant code symbols and documentation that answer the query.\nQuery: global model cache"
+	if got != want {
+		t.Fatalf("formatQwen3Query() = %q, want %q", got, want)
 	}
-	if got := normalizeEmbeddingGemmaTitle(""); got != "none" {
-		t.Fatalf("normalizeEmbeddingGemmaTitle(empty) = %q", got)
+}
+
+func TestFormatQwen3IndexedSymbolDocumentIncludesTitleAndMetadata(t *testing.T) {
+	t.Parallel()
+
+	doc := qwen3EmbeddingModel{}.FormatIndexedSymbolDocument(
+		"/tmp/internal/model_cache.go",
+		indexing.IndexedSymbol{
+			Kind:          "function",
+			Name:          "ResolveOrInstallModelPath",
+			QualifiedName: "ModelCache.ResolveOrInstallModelPath",
+			Signature:     "func ResolveOrInstallModelPath() string",
+			Documentation: "the default embedding model is downloaded once into the user cache",
+			FileContext:   "Global GGUF model cache with auto-download",
+			Body:          "func resolveOrInstallModelPath() {}\nfunc installDefaultEmbeddingModel() {}",
+		},
+	)
+
+	for _, want := range []string{
+		"Title: model_cache.go ModelCache.ResolveOrInstallModelPath",
+		"Kind: function",
+		"Name: ResolveOrInstallModelPath",
+		"Qualified name: ModelCache.ResolveOrInstallModelPath",
+		"Signature:\nfunc ResolveOrInstallModelPath() string",
+		"Documentation:\nthe default embedding model is downloaded once into the user cache",
+		"File context:\nGlobal GGUF model cache with auto-download",
+		"Body snippet:\nfunc resolveOrInstallModelPath() {}\nfunc installDefaultEmbeddingModel() {}",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("formatted Qwen3 document is missing %q in %q", want, doc)
+		}
+	}
+}
+
+func TestNormalizeDocumentTitle(t *testing.T) {
+	t.Parallel()
+
+	if got := normalizeDocumentTitle("internal/model|cache.go"); got != "internal/model/cache.go" {
+		t.Fatalf("normalizeDocumentTitle() = %q", got)
+	}
+	if got := normalizeDocumentTitle(""); got != "none" {
+		t.Fatalf("normalizeDocumentTitle(empty) = %q", got)
+	}
+}
+
+func TestModelForPath(t *testing.T) {
+	t.Parallel()
+
+	gemmaID := embeddingGemmaModel{}.ID()
+	qwenID := qwen3EmbeddingModel{}.ID()
+
+	if got := modelForPath("/tmp/embeddinggemma-300m.gguf").ID(); got != gemmaID {
+		t.Fatalf("modelForPath(gemma) = %q", got)
+	}
+	if got := modelForPath("/tmp/Qwen3-Embedding-0.6B-Q8_0.gguf").ID(); got != qwenID {
+		t.Fatalf("modelForPath(qwen3) = %q", got)
 	}
 }
 

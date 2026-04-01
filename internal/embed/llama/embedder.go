@@ -28,11 +28,12 @@ type Config struct {
 }
 
 type Embedder struct {
-	mu    sync.Mutex
-	model llama.Model
-	ctx   llama.Context
-	vocab llama.Vocab
-	dim   int
+	mu      sync.Mutex
+	model   llama.Model
+	ctx     llama.Context
+	vocab   llama.Vocab
+	dim     int
+	profile embeddingModel
 }
 
 var (
@@ -43,17 +44,13 @@ var (
 	preloadedYzmaLibs   []ffi.Lib
 )
 
-const (
-	embeddingGemmaRetrievalQueryPrefix = "task: code retrieval | query: "
-	embeddingGemmaDocumentPrefix       = "title: %s | text: %s"
-	embeddingDocFormatVersion          = "v4"
-)
-
 // New loads the yzma runtime, opens the GGUF model, and prepares an embedding context.
 func New(cfg Config) (*Embedder, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+
+	profile := modelForPath(cfg.ModelPath)
 
 	resolvedLibPath, _, err := unchruntime.ResolveYzmaLibPath(cfg.LibPath)
 	if err != nil {
@@ -69,7 +66,7 @@ func New(cfg Config) (*Embedder, error) {
 		cfg.BatchSize = 2048
 	}
 	if cfg.Pooling == 0 {
-		cfg.Pooling = llama.PoolingTypeMean
+		cfg.Pooling = profile.DefaultPooling()
 	}
 
 	llamaGlobalMu.Lock()
@@ -134,10 +131,11 @@ func New(cfg Config) (*Embedder, error) {
 	}
 
 	return &Embedder{
-		model: model,
-		ctx:   ctx,
-		vocab: llama.ModelGetVocab(model),
-		dim:   int(llama.ModelNEmbd(model)),
+		model:   model,
+		ctx:     ctx,
+		vocab:   llama.ModelGetVocab(model),
+		dim:     int(llama.ModelNEmbd(model)),
+		profile: profile,
 	}, nil
 }
 
@@ -229,13 +227,13 @@ func (e *Embedder) Embed(text string) ([]float32, error) {
 }
 
 func (e *Embedder) EmbedQuery(text string) ([]float32, error) {
-	return e.Embed(formatEmbeddingGemmaQuery(text))
+	return e.Embed(e.profile.FormatQuery(text))
 }
 
 // EmbedIndexedSymbol builds a retrieval document for a symbol and returns its hash and embedding vector.
 func (e *Embedder) EmbedIndexedSymbol(path string, symbol indexing.IndexedSymbol) (string, []float32, error) {
-	documentInput := formatIndexedSymbolDocument(path, symbol)
-	hash := hashComment("embedding_doc_format:" + embeddingDocFormatVersion + "\n" + documentInput)
+	documentInput := e.profile.FormatIndexedSymbolDocument(path, symbol)
+	hash := hashComment("embedding_doc_format:" + e.profile.ID() + "\n" + documentInput)
 
 	vec, err := e.Embed(documentInput)
 	if err != nil {
@@ -265,77 +263,6 @@ func normalizeText(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
 	return s
-}
-
-func formatIndexedSymbolDocument(path string, symbol indexing.IndexedSymbol) string {
-	kind := normalizeText(symbol.Kind)
-	name := normalizeText(symbol.Name)
-	qualifiedName := normalizeText(symbol.QualifiedName)
-	signature := normalizeText(symbol.Signature)
-	documentation := normalizeText(symbol.Documentation)
-	fileContext := normalizeText(symbol.FileContext)
-	bodyText := normalizeText(symbol.Body)
-
-	var body strings.Builder
-	body.WriteString("Path: ")
-	body.WriteString(path)
-	if kind != "" {
-		body.WriteString("\nKind: ")
-		body.WriteString(kind)
-	}
-	if name != "" {
-		body.WriteString("\nName: ")
-		body.WriteString(name)
-	}
-	if qualifiedName != "" && qualifiedName != name {
-		body.WriteString("\nQualified name: ")
-		body.WriteString(qualifiedName)
-	}
-	if signature != "" {
-		body.WriteString("\nSignature:\n")
-		body.WriteString(signature)
-	}
-	if documentation != "" {
-		body.WriteString("\nDocumentation:\n")
-		body.WriteString(documentation)
-	}
-	if fileContext != "" {
-		body.WriteString("\nFile context:\n")
-		body.WriteString(fileContext)
-	}
-	if bodyText != "" {
-		body.WriteString("\nBody snippet:\n")
-		body.WriteString(bodyText)
-	}
-
-	title := normalizeText(strings.TrimSpace(filepath.Base(path)))
-	if title == "" || title == "." || title == string(filepath.Separator) {
-		title = "symbol"
-	}
-	if qualifiedName != "" {
-		title = strings.TrimSpace(title + " " + qualifiedName)
-	}
-	return formatEmbeddingGemmaDocument(title, body.String())
-}
-
-func formatEmbeddingGemmaQuery(text string) string {
-	text = normalizeText(text)
-	return embeddingGemmaRetrievalQueryPrefix + text
-}
-
-func formatEmbeddingGemmaDocument(title string, text string) string {
-	title = normalizeEmbeddingGemmaTitle(title)
-	text = normalizeText(text)
-	return fmt.Sprintf(embeddingGemmaDocumentPrefix, title, text)
-}
-
-func normalizeEmbeddingGemmaTitle(title string) string {
-	title = normalizeText(title)
-	title = strings.ReplaceAll(title, "|", "/")
-	if title == "" {
-		return "none"
-	}
-	return title
 }
 
 func l2Normalize(v []float32) {

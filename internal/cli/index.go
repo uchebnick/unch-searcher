@@ -118,7 +118,7 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 		ContextSize: *contextSize,
 		BatchSize:   *batchSize,
 		Verbose:     *verbose,
-		Pooling:     defaultPooling(),
+		Pooling:     defaultPooling(resolvedModelPath),
 	})
 	if err != nil {
 		return err

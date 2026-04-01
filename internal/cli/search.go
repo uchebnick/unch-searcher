@@ -124,7 +124,7 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 		ContextSize: *contextSize,
 		BatchSize:   *batchSize,
 		Verbose:     *verbose,
-		Pooling:     defaultPooling(),
+		Pooling:     defaultPooling(resolvedModelPath),
 	})
 	if err != nil {
 		return err

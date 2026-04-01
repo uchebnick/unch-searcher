@@ -206,6 +206,6 @@ func loadEmbedderWithSpinner(ctx context.Context, s *termui.Session, cfg llamaem
 	return embedder, nil
 }
 
-func defaultPooling() llama.PoolingType {
-	return llama.PoolingTypeMean
+func defaultPooling(modelPath string) llama.PoolingType {
+	return llamaembed.DefaultPoolingForModelPath(modelPath)
 }

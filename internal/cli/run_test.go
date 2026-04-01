@@ -303,7 +303,10 @@ func TestStringListFlag(t *testing.T) {
 func TestDefaultPooling(t *testing.T) {
 	t.Parallel()
 
-	if got := defaultPooling(); got != llama.PoolingTypeMean {
-		t.Fatalf("defaultPooling() = %v, want %v", got, llama.PoolingTypeMean)
+	if got := defaultPooling("/tmp/embeddinggemma-300m.gguf"); got != llama.PoolingTypeMean {
+		t.Fatalf("defaultPooling(gemma) = %v, want %v", got, llama.PoolingTypeMean)
+	}
+	if got := defaultPooling("/tmp/Qwen3-Embedding-0.6B-Q8_0.gguf"); got != llama.PoolingTypeLast {
+		t.Fatalf("defaultPooling(qwen3) = %v, want %v", got, llama.PoolingTypeLast)
 	}
 }
