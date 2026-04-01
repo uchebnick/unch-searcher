@@ -80,8 +80,33 @@ jobs:
           path: benchmarks/results/
           if-no-files-found: warn
 
-  test:
-    name: test-and-coverage
+  test-matrix:
+    name: test (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+          - os: macos-14
+            label: macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+  coverage:
+    name: coverage
     runs-on: ubuntu-latest
 
     steps:
