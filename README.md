@@ -164,7 +164,7 @@ unch bind ci https://github.com/uchebnick/unch
 
 After the workflow is committed and runs successfully once, `unch search` can refresh the published index automatically when a newer remote version exists. Use `unch remote sync` when you want to force a refresh before searching.
 
-The benchmark suite runs in CI only on release tags so ordinary pushes stay fast, while coverage still runs on every push.
+The benchmark suite runs in CI only on release tags, using the smaller smoke profile so ordinary pushes stay fast while coverage still runs on every push.
 
 ## Contributing and Feedback
 

@@ -73,6 +73,13 @@ go run ./cmd/bench \
   -tool-option lib=/path/to/yzma
 ```
 
+Use a known model id instead of a full path:
+
+```bash
+go run ./cmd/bench \
+  -tool-option model=qwen3
+```
+
 ## What The Runner Measures
 
 The runner records:
@@ -157,13 +164,13 @@ That larger matrix is deliberate. It makes the suite more resistant to “one lu
 Typical summary:
 
 ```text
-Tool: unch (v0.2.2)
-Suite: /.../benchmarks/suites/default.json [default v2]
+Tool: unch (v0.3.0)
+Suite: /.../benchmarks/suites/smoke.json [smoke v1]
 Suite revision: sha256:...
 Environment: darwin/arm64 • Apple M4 • 10 cores
-Cold index mean: 2.14s
-Warm index mean: 2.23s
-Warm search mean: 381.45ms
+Cold index mean: 1.95s
+Warm index mean: 316.68ms
+Warm search mean: 305.57ms
 Quality: 95/100 (top1=0.917 top3=1.000 mrr=0.958)
 ```
 
@@ -176,6 +183,8 @@ Interpretation:
 - `top3` shows whether the right answer still stays near the top
 - `mrr` punishes rank drift
 - `quality score` is the compact comparison number, but it should always be read together with the raw metrics
+
+The release-tag GitHub Actions benchmark uses the smoke suite with a lighter `1 cold / 1 warm / 1 search repeat` profile so release CI stays reasonably fast. Local runs keep the heavier defaults unless you override them with flags.
 
 ## Result Files
 
