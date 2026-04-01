@@ -133,10 +133,22 @@ func TestKnownModelProfiles(t *testing.T) {
 	if !ok || qwenProfile.ID != "qwen3" {
 		t.Fatalf("ResolveKnownModelProfile(qwen3) = (%#v, %v)", qwenProfile, ok)
 	}
+	if qwenProfile.DefaultContext != 8192 || qwenProfile.DefaultBatch != 8192 {
+		t.Fatalf("ResolveKnownModelProfile(qwen3) defaults = (%d, %d)", qwenProfile.DefaultContext, qwenProfile.DefaultBatch)
+	}
 
 	gemmaByPath, ok := RecognizeModelProfileForPath("/tmp/embeddinggemma-300m.gguf")
 	if !ok || gemmaByPath.ID != "embeddinggemma" {
 		t.Fatalf("RecognizeModelProfileForPath(gemma) = (%#v, %v)", gemmaByPath, ok)
+	}
+	if gemmaByPath.DefaultContext != 2048 || gemmaByPath.DefaultBatch != 2048 {
+		t.Fatalf("RecognizeModelProfileForPath(gemma) defaults = (%d, %d)", gemmaByPath.DefaultContext, gemmaByPath.DefaultBatch)
+	}
+	if got := DefaultContextSizeForModelPath("/tmp/Qwen3-Embedding-0.6B-Q8_0.gguf"); got != 8192 {
+		t.Fatalf("DefaultContextSizeForModelPath(qwen3) = %d", got)
+	}
+	if got := DefaultBatchSizeForModelPath("/tmp/Qwen3-Embedding-0.6B-Q8_0.gguf"); got != 8192 {
+		t.Fatalf("DefaultBatchSizeForModelPath(qwen3) = %d", got)
 	}
 }
 

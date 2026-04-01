@@ -209,3 +209,11 @@ func loadEmbedderWithSpinner(ctx context.Context, s *termui.Session, cfg llamaem
 func defaultPooling(modelPath string) llama.PoolingType {
 	return llamaembed.DefaultPoolingForModelPath(modelPath)
 }
+
+func defaultContextSize(modelPath string) int {
+	return llamaembed.DefaultContextSizeForModelPath(modelPath)
+}
+
+func defaultBatchSize(modelPath string) int {
+	return llamaembed.DefaultBatchSizeForModelPath(modelPath)
+}

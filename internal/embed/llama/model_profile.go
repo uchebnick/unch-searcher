@@ -22,6 +22,8 @@ type ModelProfile struct {
 	Aliases         []string
 	DefaultFilename string
 	DownloadURL     string
+	DefaultContext  int
+	DefaultBatch    int
 }
 
 type embeddingModel interface {
@@ -90,6 +92,16 @@ func DefaultPoolingForModelPath(modelPath string) llama.PoolingType {
 	return modelForPath(modelPath).DefaultPooling()
 }
 
+// DefaultContextSizeForModelPath returns the model-specific context size used when the CLI does not override it.
+func DefaultContextSizeForModelPath(modelPath string) int {
+	return modelForPath(modelPath).Profile().DefaultContext
+}
+
+// DefaultBatchSizeForModelPath returns the model-specific batch size used when the CLI does not override it.
+func DefaultBatchSizeForModelPath(modelPath string) int {
+	return modelForPath(modelPath).Profile().DefaultBatch
+}
+
 func modelForPath(modelPath string) embeddingModel {
 	for _, model := range embeddingModels {
 		if model.Matches(modelPath) {
@@ -107,6 +119,8 @@ func (embeddingGemmaModel) Profile() ModelProfile {
 		Aliases:         []string{"default", "embeddinggemma", "gemma", "embeddinggemma-300m"},
 		DefaultFilename: "embeddinggemma-300m.gguf",
 		DownloadURL:     "https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/resolve/main/embeddinggemma-300M-Q8_0.gguf?download=true",
+		DefaultContext:  2048,
+		DefaultBatch:    2048,
 	}
 }
 
@@ -140,6 +154,8 @@ func (qwen3EmbeddingModel) Profile() ModelProfile {
 		Aliases:         []string{"qwen3", "qwen3-embedding", "qwen3embedding", "qwen"},
 		DefaultFilename: "Qwen3-Embedding-0.6B-Q8_0.gguf",
 		DownloadURL:     "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf?download=true",
+		DefaultContext:  8192,
+		DefaultBatch:    8192,
 	}
 }
 

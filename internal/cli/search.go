@@ -33,8 +33,8 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 	queryFlag := fs.String("query", "", "search query; if empty, remaining args are joined")
 	commentPrefix := fs.String("comment-prefix", "@search:", "legacy comment prefix used only by fallback indexers")
 	contextPrefix := fs.String("context-prefix", "@filectx:", "legacy file context prefix used only by fallback indexers")
-	contextSize := fs.Int("ctx-size", 2048, "llama context size")
-	batchSize := fs.Int("batch-size", 2048, "llama batch size")
+	contextSize := fs.Int("ctx-size", 0, "llama context size; 0 uses the selected model default")
+	batchSize := fs.Int("batch-size", 0, "llama batch size; 0 uses the selected model default")
 	limit := fs.Int("limit", 10, "max number of search results")
 	mode := fs.String("mode", "auto", "search mode: auto, semantic, lexical")
 	maxDistance := fs.Float64("max-distance", 0.85, "maximum semantic distance kept in auto and semantic modes; <= 0 disables filtering")
@@ -131,11 +131,21 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 	if err != nil {
 		return fmt.Errorf("resolve model id: %w", err)
 	}
+	resolvedContextSize := *contextSize
+	if resolvedContextSize <= 0 {
+		resolvedContextSize = defaultContextSize(resolvedModelPath)
+	}
+	resolvedBatchSize := *batchSize
+	if resolvedBatchSize <= 0 {
+		resolvedBatchSize = defaultBatchSize(resolvedModelPath)
+	}
 
 	s.Logf("db=%s", resolvedDBPath)
 	s.Logf("lib=%s", resolvedLibPath)
 	s.Logf("model=%s", resolvedModelPath)
 	s.Logf("model_id=%s", modelID)
+	s.Logf("ctx_size=%d", resolvedContextSize)
+	s.Logf("batch_size=%d", resolvedBatchSize)
 	s.Logf("root=%s", rootAbs)
 	s.Logf("query=%q", queryText)
 	s.Logf("limit=%d", *limit)
@@ -145,8 +155,8 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 	embedder, err := loadEmbedderWithSpinner(ctx, s, llamaembed.Config{
 		ModelPath:   resolvedModelPath,
 		LibPath:     resolvedLibPath,
-		ContextSize: *contextSize,
-		BatchSize:   *batchSize,
+		ContextSize: resolvedContextSize,
+		BatchSize:   resolvedBatchSize,
 		Verbose:     *verbose,
 		Pooling:     defaultPooling(resolvedModelPath),
 	})

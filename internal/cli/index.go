@@ -33,8 +33,8 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 	contextPrefix := fs.String("context-prefix", "@filectx:", "legacy file context prefix used only by fallback indexers")
 	commentPrefix := fs.String("comment-prefix", "@search:", "legacy comment prefix used only by fallback indexers")
 	gitignorePath := fs.String("gitignore", "", "optional path to .gitignore; default is <root>/.gitignore")
-	contextSize := fs.Int("ctx-size", 2048, "llama context size")
-	batchSize := fs.Int("batch-size", 2048, "llama batch size")
+	contextSize := fs.Int("ctx-size", 0, "llama context size; 0 uses the selected model default")
+	batchSize := fs.Int("batch-size", 0, "llama batch size; 0 uses the selected model default")
 	verbose := fs.Bool("verbose", false, "enable yzma verbose logging")
 	fs.Var(&excludes, "exclude", "exclude pattern; can be used multiple times")
 
@@ -122,6 +122,14 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 	if err != nil {
 		return fmt.Errorf("resolve model id: %w", err)
 	}
+	resolvedContextSize := *contextSize
+	if resolvedContextSize <= 0 {
+		resolvedContextSize = defaultContextSize(resolvedModelPath)
+	}
+	resolvedBatchSize := *batchSize
+	if resolvedBatchSize <= 0 {
+		resolvedBatchSize = defaultBatchSize(resolvedModelPath)
+	}
 
 	resolvedGitignore, err := indexing.ResolveGitignorePath(rootAbs, *gitignorePath)
 	if err != nil {
@@ -132,13 +140,15 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 	s.Logf("lib=%s", resolvedLibPath)
 	s.Logf("model=%s", resolvedModelPath)
 	s.Logf("model_id=%s", modelID)
+	s.Logf("ctx_size=%d", resolvedContextSize)
+	s.Logf("batch_size=%d", resolvedBatchSize)
 	s.Logf("root=%s", rootAbs)
 
 	embedder, err := loadEmbedderWithSpinner(ctx, s, llamaembed.Config{
 		ModelPath:   resolvedModelPath,
 		LibPath:     resolvedLibPath,
-		ContextSize: *contextSize,
-		BatchSize:   *batchSize,
+		ContextSize: resolvedContextSize,
+		BatchSize:   resolvedBatchSize,
 		Verbose:     *verbose,
 		Pooling:     defaultPooling(resolvedModelPath),
 	})

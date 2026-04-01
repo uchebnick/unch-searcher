@@ -8,6 +8,78 @@ permissions:
   contents: write
 
 jobs:
+  benchmark:
+    name: benchmark-suite
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+
+    env:
+      SEMSEARCH_YZMA_VERSION: b8581
+      UNCH_BENCH_ROOT: ${{ github.workspace }}/.bench-cache
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Restore benchmark cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.UNCH_BENCH_ROOT }}/cache
+          key: benchmark-${{ runner.os }}-${{ hashFiles('benchmarks/suites/smoke.json', 'go.mod') }}
+          restore-keys: |
+            benchmark-${{ runner.os }}-
+
+      - name: Run benchmark suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p benchmarks/results
+          go run ./cmd/bench \
+            -suite "${GITHUB_WORKSPACE}/benchmarks/suites/smoke.json" \
+            -bench-root "${UNCH_BENCH_ROOT}" \
+            -cold-index-runs 1 \
+            -warm-index-runs 1 \
+            -warm-search-runs 1 \
+            -results-dir "${GITHUB_WORKSPACE}/benchmarks/results" \
+            -output "${GITHUB_WORKSPACE}/benchmarks/results/ci-benchmark.json" \
+            2>&1 | tee "${GITHUB_WORKSPACE}/benchmarks/results/ci-benchmark.log"
+
+      - name: Render benchmark summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f benchmarks/results/ci-benchmark.json ]; then
+            python3 scripts/render_benchmark_summary.py benchmarks/results/ci-benchmark.json >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Benchmark"
+              echo
+              echo "Benchmark run did not produce a JSON report."
+              if [ -f benchmarks/results/ci-benchmark.log ]; then
+                echo
+                echo "### Log tail"
+                echo
+                echo '```text'
+                tail -n 120 benchmarks/results/ci-benchmark.log
+                echo '```'
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload benchmark artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: benchmarks/results/
+          if-no-files-found: warn
+
   test:
     name: test-and-coverage
     runs-on: ubuntu-latest
@@ -103,75 +175,3 @@ jobs:
 
           git commit -m "chore: update coverage badge"
           git push origin HEAD:gh-pages
-
-  benchmark:
-    name: benchmark-suite
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-    runs-on: ubuntu-latest
-
-    env:
-      SEMSEARCH_YZMA_VERSION: b8581
-      UNCH_BENCH_ROOT: ${{ github.workspace }}/.bench-cache
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Restore benchmark cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.UNCH_BENCH_ROOT }}/cache
-          key: benchmark-${{ runner.os }}-${{ hashFiles('benchmarks/suites/smoke.json', 'go.mod') }}
-          restore-keys: |
-            benchmark-${{ runner.os }}-
-
-      - name: Run benchmark suite
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p benchmarks/results
-          go run ./cmd/bench \
-            -suite "${GITHUB_WORKSPACE}/benchmarks/suites/smoke.json" \
-            -bench-root "${UNCH_BENCH_ROOT}" \
-            -cold-index-runs 1 \
-            -warm-index-runs 1 \
-            -warm-search-runs 1 \
-            -results-dir "${GITHUB_WORKSPACE}/benchmarks/results" \
-            -output "${GITHUB_WORKSPACE}/benchmarks/results/ci-benchmark.json" \
-            2>&1 | tee "${GITHUB_WORKSPACE}/benchmarks/results/ci-benchmark.log"
-
-      - name: Render benchmark summary
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f benchmarks/results/ci-benchmark.json ]; then
-            python3 scripts/render_benchmark_summary.py benchmarks/results/ci-benchmark.json >> "$GITHUB_STEP_SUMMARY"
-          else
-            {
-              echo "## Benchmark"
-              echo
-              echo "Benchmark run did not produce a JSON report."
-              if [ -f benchmarks/results/ci-benchmark.log ]; then
-                echo
-                echo "### Log tail"
-                echo
-                echo '```text'
-                tail -n 120 benchmarks/results/ci-benchmark.log
-                echo '```'
-              fi
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload benchmark artifacts
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-report
-          path: benchmarks/results/
-          if-no-files-found: warn
