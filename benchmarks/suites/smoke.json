@@ -1,0 +1,52 @@
+{
+  "suite_id": "smoke",
+  "suite_version": 1,
+  "name": "smoke",
+  "description": "Fast benchmark smoke suite covering the four languages currently supported by unch.",
+  "repositories": [
+    {
+      "id": "gorilla/mux",
+      "url": "https://github.com/gorilla/mux.git",
+      "commit": "db9d1d0073d27a0a2d9a8c1bc52aa0af4374d265",
+      "language": "go",
+      "queries": [
+        { "id": "new-router", "text": "create a new router", "mode": "auto", "expected_hits": ["mux.go:32"] },
+        { "id": "vars", "text": "get path variables from a request", "mode": "auto", "expected_hits": ["mux.go:466"] },
+        { "id": "walk-lexical", "text": "Walk", "mode": "lexical", "expected_hits": ["mux.go:397"] }
+      ]
+    },
+    {
+      "id": "developit/mitt",
+      "url": "https://github.com/developit/mitt.git",
+      "commit": "6b41670516ed8e8b738612f60491995470aa63b3",
+      "language": "typescript",
+      "queries": [
+        { "id": "tiny-event-emitter", "text": "tiny functional event emitter", "mode": "auto", "expected_hits": ["src/index.ts:46"] },
+        { "id": "event-handler-map", "text": "map of event types and their corresponding event handlers", "mode": "auto", "expected_hits": ["src/index.ts:18"] },
+        { "id": "emitter-lexical", "text": "Emitter", "mode": "lexical", "expected_hits": ["src/index.ts:23"] }
+      ]
+    },
+    {
+      "id": "expressjs/morgan",
+      "url": "https://github.com/expressjs/morgan.git",
+      "commit": "561b0d70bf4486245b311a02259d32ae45756331",
+      "language": "javascript",
+      "queries": [
+        { "id": "compile-format", "text": "compile a format string into a function", "mode": "auto", "expected_hits": ["index.js:401"] },
+        { "id": "lookup-format-function", "text": "lookup and compile a named format function", "mode": "auto", "expected_hits": ["index.js:475"] },
+        { "id": "record-start-time-lexical", "text": "recordStartTime", "mode": "lexical", "expected_hits": ["index.js:535"] }
+      ]
+    },
+    {
+      "id": "pallets-eco/blinker",
+      "url": "https://github.com/pallets-eco/blinker.git",
+      "commit": "c3364059663df1ddce32799d6b1922af89a345f6",
+      "language": "python",
+      "queries": [
+        { "id": "connect-receiver", "text": "connect a receiver to a signal", "mode": "auto", "expected_hits": ["src/blinker/base.py:91"] },
+        { "id": "send-async", "text": "send a signal asynchronously", "mode": "auto", "expected_hits": ["src/blinker/base.py:255"] },
+        { "id": "signal-lexical", "text": "Signal", "mode": "lexical", "expected_hits": ["src/blinker/base.py:24"] }
+      ]
+    }
+  ]
+}
