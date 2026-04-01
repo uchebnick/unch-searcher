@@ -12,8 +12,9 @@ import (
 	"time"
 
 	"github.com/hybridgroup/yzma/pkg/llama"
-	llamaembed "github.com/uchebnick/unch-searcher/internal/embed/llama"
-	"github.com/uchebnick/unch-searcher/internal/termui"
+	llamaembed "github.com/uchebnick/unch/internal/embed/llama"
+	appsearch "github.com/uchebnick/unch/internal/search"
+	"github.com/uchebnick/unch/internal/termui"
 )
 
 type stringListFlag []string
@@ -51,6 +52,65 @@ func printSessionLine(s *termui.Session, format string, args ...any) {
 		s.Logf(format, args...)
 	}
 	_, _ = fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+func compactSearchField(text string, maxRunes int) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if maxRunes <= 0 {
+		return text
+	}
+
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-3]) + "..."
+}
+
+func renderSearchResultCompact(w io.Writer, rank int, root string, result appsearch.Result) error {
+	_, err := fmt.Fprintf(w, "%2d. %s:%d  %-7s\n", rank, formatSearchResultPath(root, result.Path), result.Line, result.DisplayMetric)
+	return err
+}
+
+func renderSearchResultDetailed(w io.Writer, rank int, root string, result appsearch.Result) error {
+	if _, err := fmt.Fprintf(w, "%2d. %s:%d  %s\n", rank, formatSearchResultPath(root, result.Path), result.Line, result.DisplayMetric); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "   kind: %s\n", compactSearchField(result.Kind, 80)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "   name: %s\n", compactSearchField(result.Name, 120)); err != nil {
+		return err
+	}
+	if value := compactSearchField(result.QualifiedName, 160); value != "" {
+		if _, err := fmt.Fprintf(w, "   qualified: %s\n", value); err != nil {
+			return err
+		}
+	}
+	if value := compactSearchField(result.Signature, 200); value != "" {
+		if _, err := fmt.Fprintf(w, "   signature: %s\n", value); err != nil {
+			return err
+		}
+	}
+	if value := compactSearchField(result.Documentation, 220); value != "" {
+		if _, err := fmt.Fprintf(w, "   docs: %s\n", value); err != nil {
+			return err
+		}
+	}
+	if value := compactSearchField(result.Body, 220); value != "" {
+		if _, err := fmt.Fprintf(w, "   body: %s\n", value); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 func confirmRemoteReindex(s *termui.Session, in io.Reader, out io.Writer, interactive bool) (bool, error) {

@@ -4,16 +4,17 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
-	llamaembed "github.com/uchebnick/unch-searcher/internal/embed/llama"
-	"github.com/uchebnick/unch-searcher/internal/indexdb"
-	"github.com/uchebnick/unch-searcher/internal/indexing"
-	"github.com/uchebnick/unch-searcher/internal/runtime"
-	appsearch "github.com/uchebnick/unch-searcher/internal/search"
-	"github.com/uchebnick/unch-searcher/internal/semsearch"
-	"github.com/uchebnick/unch-searcher/internal/termui"
+	llamaembed "github.com/uchebnick/unch/internal/embed/llama"
+	"github.com/uchebnick/unch/internal/indexdb"
+	"github.com/uchebnick/unch/internal/indexing"
+	"github.com/uchebnick/unch/internal/runtime"
+	appsearch "github.com/uchebnick/unch/internal/search"
+	"github.com/uchebnick/unch/internal/semsearch"
+	"github.com/uchebnick/unch/internal/termui"
 )
 
 func runSearch(ctx context.Context, program string, args []string, paths semsearch.Paths, s *termui.Session, _ indexing.FileScanner, runtimes runtime.YzmaResolver, models runtime.ModelCache) error {
@@ -35,6 +36,7 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 	limit := fs.Int("limit", 10, "max number of search results")
 	mode := fs.String("mode", "auto", "search mode: auto, semantic, lexical")
 	maxDistance := fs.Float64("max-distance", 0.85, "maximum semantic distance kept in auto and semantic modes; <= 0 disables filtering")
+	details := fs.Bool("details", false, "show detailed metadata for each search result")
 	verbose := fs.Bool("verbose", false, "enable yzma verbose logging")
 
 	if err := fs.Parse(args); err != nil {
@@ -164,7 +166,15 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 
 	s.Finish(fmt.Sprintf("Found %d matches", len(results)))
 	for i, result := range results {
-		fmt.Printf("%2d. %s:%d  %-7s\n", i+1, formatSearchResultPath(rootAbs, result.Path), result.Line, result.DisplayMetric)
+		var err error
+		if *details {
+			err = renderSearchResultDetailed(os.Stdout, i+1, rootAbs, result)
+		} else {
+			err = renderSearchResultCompact(os.Stdout, i+1, rootAbs, result)
+		}
+		if err != nil {
+			return fmt.Errorf("render search result: %w", err)
+		}
 	}
 
 	return nil
