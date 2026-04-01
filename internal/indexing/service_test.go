@@ -53,10 +53,19 @@ func (r *testRepo) CleanupInactiveSnapshots(ctx context.Context) error {
 }
 func (r *testRepo) CleanupUnusedEmbeddings(ctx context.Context) error { return nil }
 
-type testEmbedder struct{}
+type testEmbedder struct {
+	hashCalls  int
+	embedCalls int
+}
 
-func (testEmbedder) EmbedIndexedSymbol(path string, symbol IndexedSymbol) (string, []float32, error) {
-	return path + ":" + symbol.QualifiedName, []float32{1, 2, 3}, nil
+func (e *testEmbedder) IndexedSymbolHash(path string, symbol IndexedSymbol) string {
+	e.hashCalls++
+	return path + ":" + symbol.QualifiedName
+}
+
+func (e *testEmbedder) EmbedIndexedSymbol(path string, symbol IndexedSymbol) ([]float32, error) {
+	e.embedCalls++
+	return []float32{1, 2, 3}, nil
 }
 
 type testReporter struct {
@@ -82,11 +91,12 @@ func TestServiceRunIndexesComments(t *testing.T) {
 		existing:   map[string]bool{"a.go:First": true},
 	}
 	reporter := &testReporter{}
+	embedder := &testEmbedder{}
 
 	service := Service{
 		Scanner:  scanner,
 		Repo:     repo,
-		Embedder: testEmbedder{},
+		Embedder: embedder,
 	}
 
 	result, err := service.Run(context.Background(), Params{
@@ -108,6 +118,12 @@ func TestServiceRunIndexesComments(t *testing.T) {
 	}
 	if len(repo.added) != 1 {
 		t.Fatalf("expected one new embedding, got %v", repo.added)
+	}
+	if embedder.hashCalls != 2 {
+		t.Fatalf("expected two hash calls, got %d", embedder.hashCalls)
+	}
+	if embedder.embedCalls != 1 {
+		t.Fatalf("expected one embedding call after cache check, got %d", embedder.embedCalls)
 	}
 	if len(repo.inserts) != 2 {
 		t.Fatalf("expected two inserts, got %v", repo.inserts)
@@ -139,7 +155,7 @@ func TestServiceRunHonorsContextCancellation(t *testing.T) {
 			jobs: []FileJob{{Path: "/tmp/a.go", Symbols: []IndexedSymbol{{Line: 1, Kind: "function", Name: "A", QualifiedName: "A"}}}},
 		},
 		Repo:     &testRepo{snapshotID: 1, existing: map[string]bool{}},
-		Embedder: testEmbedder{},
+		Embedder: &testEmbedder{},
 	}
 
 	if _, err := service.Run(ctx, Params{}, nil); err == nil {

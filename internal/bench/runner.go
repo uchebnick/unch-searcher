@@ -102,11 +102,17 @@ func benchmarkRepository(ctx context.Context, adapter Adapter, repo CheckedOutRe
 	}
 
 	var warmIndexDurations []time.Duration
+	if cfg.WarmIndexRuns > 0 && !hasLocalIndexState(repo.Root) {
+		tracker.Printf("Preparing warm baseline for %s", repo.Case.ID)
+		if err := removeLocalIndexState(repo.Root); err != nil {
+			return RepositoryReport{}, nil, nil, nil, nil, fmt.Errorf("remove local index state for %s warm baseline: %w", repo.Case.ID, err)
+		}
+		if _, err := adapter.Index(ctx, repo, env, cfg); err != nil {
+			return RepositoryReport{}, nil, nil, nil, nil, err
+		}
+	}
 	for i := 0; i < cfg.WarmIndexRuns; i++ {
 		tracker.Step(repo.Case.ID, fmt.Sprintf("warm index %d/%d", i+1, cfg.WarmIndexRuns))
-		if err := removeLocalIndexState(repo.Root); err != nil {
-			return RepositoryReport{}, nil, nil, nil, nil, fmt.Errorf("remove local index state for %s warm run: %w", repo.Case.ID, err)
-		}
 		result, err := adapter.Index(ctx, repo, env, cfg)
 		if err != nil {
 			return RepositoryReport{}, nil, nil, nil, nil, err
@@ -251,6 +257,11 @@ func ensureRepoCheckout(ctx context.Context, repoCase RepositoryCase, reposRoot 
 
 func removeLocalIndexState(repoRoot string) error {
 	return os.RemoveAll(filepath.Join(repoRoot, ".semsearch"))
+}
+
+func hasLocalIndexState(repoRoot string) bool {
+	_, err := os.Stat(filepath.Join(repoRoot, ".semsearch", "index.db"))
+	return err == nil
 }
 
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {

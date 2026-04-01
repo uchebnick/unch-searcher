@@ -230,16 +230,14 @@ func (e *Embedder) EmbedQuery(text string) ([]float32, error) {
 	return e.Embed(e.profile.FormatQuery(text))
 }
 
-// EmbedIndexedSymbol builds a retrieval document for a symbol and returns its hash and embedding vector.
-func (e *Embedder) EmbedIndexedSymbol(path string, symbol indexing.IndexedSymbol) (string, []float32, error) {
-	documentInput := e.profile.FormatIndexedSymbolDocument(path, symbol)
-	hash := hashComment("embedding_doc_format:" + e.profile.ID() + "\n" + documentInput)
+// IndexedSymbolHash returns the stable embedding-document hash for one symbol without running the model.
+func (e *Embedder) IndexedSymbolHash(path string, symbol indexing.IndexedSymbol) string {
+	return hashIndexedSymbolDocument(e.profile, path, symbol)
+}
 
-	vec, err := e.Embed(documentInput)
-	if err != nil {
-		return "", nil, err
-	}
-	return hash, vec, nil
+// EmbedIndexedSymbol builds a retrieval document for a symbol and returns its embedding vector.
+func (e *Embedder) EmbedIndexedSymbol(path string, symbol indexing.IndexedSymbol) ([]float32, error) {
+	return e.Embed(indexedSymbolDocument(e.profile, path, symbol))
 }
 
 func hashComment(text string) string {
@@ -256,6 +254,14 @@ func hashComment(text string) string {
 	b[7] = byte(sum)
 
 	return hex.EncodeToString(b[:])
+}
+
+func hashIndexedSymbolDocument(profile embeddingModel, path string, symbol indexing.IndexedSymbol) string {
+	return hashComment("embedding_doc_format:" + profile.ID() + "\n" + indexedSymbolDocument(profile, path, symbol))
+}
+
+func indexedSymbolDocument(profile embeddingModel, path string, symbol indexing.IndexedSymbol) string {
+	return profile.FormatIndexedSymbolDocument(path, symbol)
 }
 
 func normalizeText(s string) string {

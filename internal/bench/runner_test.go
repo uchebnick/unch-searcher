@@ -29,6 +29,14 @@ func (f *fakeAdapter) Prepare(ctx context.Context, env Environment) error {
 
 func (f *fakeAdapter) Index(ctx context.Context, repo CheckedOutRepo, env Environment, cfg RunConfig) (IndexRunResult, error) {
 	f.indexCalls++
+	indexPath := filepath.Join(repo.Root, ".semsearch", "index.db")
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
+		return IndexRunResult{}, err
+	}
+	if err := os.WriteFile(indexPath, []byte("ok"), 0o644); err != nil {
+		return IndexRunResult{}, err
+	}
+
 	switch f.indexCalls {
 	case 1:
 		return IndexRunResult{Summary: "Indexed 10 symbols in 3 files", IndexedSymbols: 10, IndexedFiles: 3, Duration: 100 * time.Millisecond}, nil
@@ -152,6 +160,99 @@ func TestRunBenchmarkProducesStableReport(t *testing.T) {
 	}
 	if decoded.Metrics.QualityScore != 68 {
 		t.Fatalf("decoded quality score = %d", decoded.Metrics.QualityScore)
+	}
+}
+
+type cacheAwareAdapter struct {
+	indexSawExisting []bool
+}
+
+func (a *cacheAwareAdapter) Name() string    { return "cache-aware" }
+func (a *cacheAwareAdapter) Version() string { return "cache-aware-v1" }
+func (a *cacheAwareAdapter) Prepare(ctx context.Context, env Environment) error {
+	return nil
+}
+func (a *cacheAwareAdapter) Index(ctx context.Context, repo CheckedOutRepo, env Environment, cfg RunConfig) (IndexRunResult, error) {
+	indexPath := filepath.Join(repo.Root, ".semsearch", "index.db")
+	_, err := os.Stat(indexPath)
+	a.indexSawExisting = append(a.indexSawExisting, err == nil)
+
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
+		return IndexRunResult{}, err
+	}
+	if err := os.WriteFile(indexPath, []byte("ok"), 0o644); err != nil {
+		return IndexRunResult{}, err
+	}
+
+	return IndexRunResult{
+		Summary:        "Indexed 1 symbols in 1 files",
+		IndexedSymbols: 1,
+		IndexedFiles:   1,
+		Duration:       10 * time.Millisecond,
+	}, nil
+}
+func (a *cacheAwareAdapter) Search(ctx context.Context, repo CheckedOutRepo, query QueryCase, env Environment, cfg RunConfig) (SearchRunResult, error) {
+	return SearchRunResult{
+		Duration: 5 * time.Millisecond,
+		Hits:     []SearchHit{{Rank: 1, Path: "main.go", Line: 12}},
+	}, nil
+}
+
+func TestRunBenchmarkWarmIndexReusesExistingLocalState(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	repoRoot := createGitRepo(t, root)
+	suite := Suite{
+		ID:      "warm-cache-suite",
+		Version: 1,
+		Name:    "warm-cache-suite",
+		Repositories: []RepositoryCase{
+			{
+				ID:       "local/repo",
+				URL:      repoRoot,
+				Commit:   gitHead(t, repoRoot),
+				Language: "go",
+				Queries: []QueryCase{
+					{ID: "exact", Text: "find main", Mode: "auto", ExpectedHits: []string{"main.go:12"}},
+				},
+			},
+		},
+	}
+
+	suitePath := filepath.Join(root, "suite.json")
+	suiteJSON, err := json.Marshal(suite)
+	if err != nil {
+		t.Fatalf("json.Marshal() error: %v", err)
+	}
+	if err := os.WriteFile(suitePath, suiteJSON, 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	env, err := NewEnvironment(root, suitePath, filepath.Join(root, "bench"), filepath.Join(root, "results"), nil)
+	if err != nil {
+		t.Fatalf("NewEnvironment() error: %v", err)
+	}
+
+	adapter := &cacheAwareAdapter{}
+	if _, err := RunBenchmark(ctx, adapter, suite, env, RunConfig{
+		ColdIndexRuns:  1,
+		WarmIndexRuns:  2,
+		WarmSearchRuns: 1,
+		SearchLimit:    10,
+	}, io.Discard); err != nil {
+		t.Fatalf("RunBenchmark() error: %v", err)
+	}
+
+	if len(adapter.indexSawExisting) != 3 {
+		t.Fatalf("index calls = %d, want 3", len(adapter.indexSawExisting))
+	}
+	if adapter.indexSawExisting[0] {
+		t.Fatalf("cold index unexpectedly saw an existing local index")
+	}
+	if !adapter.indexSawExisting[1] || !adapter.indexSawExisting[2] {
+		t.Fatalf("warm index runs should reuse existing local state, got %v", adapter.indexSawExisting)
 	}
 }
 

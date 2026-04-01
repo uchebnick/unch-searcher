@@ -91,13 +91,15 @@ The runner records:
 
 - one index run on a repo with its local `.semsearch/` removed
 - model/runtime caches are already present
+- embeddings are recomputed because the local index database starts empty
 - network download time is not included
 
 `warm index`
 
 - repeated index runs on the same pinned checkout
 - shared model/runtime caches stay warm
-- repo-local `.semsearch/` is still removed between repeats
+- the existing local `.semsearch/` directory is kept between repeats
+- stored embedding hashes can be reused, so unchanged symbols should skip model inference on cache hit
 
 `warm search`
 

@@ -25,7 +25,8 @@ type Repository interface {
 }
 
 type Embedder interface {
-	EmbedIndexedSymbol(path string, symbol IndexedSymbol) (string, []float32, error)
+	IndexedSymbolHash(path string, symbol IndexedSymbol) string
+	EmbedIndexedSymbol(path string, symbol IndexedSymbol) ([]float32, error)
 }
 
 type Params struct {
@@ -89,16 +90,17 @@ func (s Service) Run(ctx context.Context, params Params, reporter Reporter) (Res
 		}
 
 		for _, symbol := range job.Symbols {
-			hash, vec, err := s.Embedder.EmbedIndexedSymbol(job.Path, symbol)
-			if err != nil {
-				return Result{}, fmt.Errorf("embed symbol at %s:%d: %w", job.Path, symbol.Line, err)
-			}
+			hash := s.Embedder.IndexedSymbolHash(job.Path, symbol)
 
 			exists, err := s.Repo.EmbeddingExists(ctx, modelID, hash)
 			if err != nil {
 				return Result{}, fmt.Errorf("check embedding exists: %w", err)
 			}
 			if !exists {
+				vec, err := s.Embedder.EmbedIndexedSymbol(job.Path, symbol)
+				if err != nil {
+					return Result{}, fmt.Errorf("embed symbol at %s:%d: %w", job.Path, symbol.Line, err)
+				}
 				if err := s.Repo.AddEmbedding(ctx, modelID, hash, vec); err != nil {
 					return Result{}, fmt.Errorf("store embedding: %w", err)
 				}
