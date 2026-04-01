@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": 5,
-  "indexing_hash": "3885683f79380c2509f8bef36c6aba8306f765bc24c40e25505b2e3f83045d4b",
+  "version": 6,
+  "indexing_hash": "320432920bc82a058796de02afb0f96f74f06facb300a7958520fcf383c3dbcd",
   "source": "remote",
   "remote": {
     "ci_url": "https://github.com/uchebnick/unch/actions/workflows/searcher.yml"
