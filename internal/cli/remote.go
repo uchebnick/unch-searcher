@@ -18,6 +18,9 @@ func runRemote(ctx context.Context, program string, args []string, cwd string) e
 	if len(args) == 0 {
 		return fmt.Errorf("remote requires a target, for example: bind, sync, or download")
 	}
+	if isHelpArg(args[0]) {
+		return printRemoteHelp(os.Stdout, cliName(program))
+	}
 
 	switch args[0] {
 	case "bind":
@@ -34,10 +37,27 @@ func runRemote(ctx context.Context, program string, args []string, cwd string) e
 func runRemoteSync(ctx context.Context, program string, args []string) error {
 	fs := flag.NewFlagSet(program+" remote sync", flag.ContinueOnError)
 	fs.SetOutput(nil)
+	fs.Usage = func() {}
 
 	rootFlag := fs.String("root", ".", "root directory whose remote search index should be refreshed")
 	allowMissing := fs.Bool("allow-missing", false, "continue when the published remote index is unavailable or incompatible")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return printFlagSetHelp(
+				os.Stdout,
+				fs,
+				cliName(program)+" remote sync [flags] [root]",
+				"Refresh the local index from a bound remote GitHub Actions workflow.",
+				[]string{
+					cliName(program) + " remote sync",
+					cliName(program) + " remote sync --root ../repo --allow-missing",
+				},
+				[]string{
+					"If the manifest is not bound, this command reports that and exits cleanly.",
+					"Use --allow-missing in CI bootstrap flows so older or unpublished remote indexes do not fail the run.",
+				},
+			)
+		}
 		return err
 	}
 
@@ -85,10 +105,26 @@ func runRemoteSync(ctx context.Context, program string, args []string) error {
 func runRemoteDownload(ctx context.Context, program string, args []string) error {
 	fs := flag.NewFlagSet(program+" remote download", flag.ContinueOnError)
 	fs.SetOutput(nil)
+	fs.Usage = func() {}
 
 	rootFlag := fs.String("root", ".", "root directory where the downloaded search index should be written")
 	commitFlag := fs.String("commit", "", "commit SHA whose search index artifact should be downloaded")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return printFlagSetHelp(
+				os.Stdout,
+				fs,
+				cliName(program)+" remote download [flags] --commit <sha> <github-repo-or-workflow-url>",
+				"Download a published search artifact for a specific commit without binding the repository to remote sync.",
+				[]string{
+					cliName(program) + " remote download --commit abc123 https://github.com/uchebnick/unch",
+					cliName(program) + " remote download --commit abc123 https://github.com/uchebnick/unch/actions/workflows/searcher.yml",
+				},
+				[]string{
+					"The downloaded manifest is activated as local-only state, so future searches do not auto-sync to latest remote by accident.",
+				},
+			)
+		}
 		return err
 	}
 

@@ -116,6 +116,30 @@ func TestModelForPath(t *testing.T) {
 	}
 }
 
+func TestKnownModelProfiles(t *testing.T) {
+	t.Parallel()
+
+	profiles := KnownModelProfiles()
+	if len(profiles) < 2 {
+		t.Fatalf("KnownModelProfiles() = %d, want at least 2", len(profiles))
+	}
+
+	defaultProfile := DefaultModelProfile()
+	if defaultProfile.ID != "embeddinggemma" {
+		t.Fatalf("DefaultModelProfile().ID = %q", defaultProfile.ID)
+	}
+
+	qwenProfile, ok := ResolveKnownModelProfile("qwen3")
+	if !ok || qwenProfile.ID != "qwen3" {
+		t.Fatalf("ResolveKnownModelProfile(qwen3) = (%#v, %v)", qwenProfile, ok)
+	}
+
+	gemmaByPath, ok := RecognizeModelProfileForPath("/tmp/embeddinggemma-300m.gguf")
+	if !ok || gemmaByPath.ID != "embeddinggemma" {
+		t.Fatalf("RecognizeModelProfileForPath(gemma) = (%#v, %v)", gemmaByPath, ok)
+	}
+}
+
 func TestHashCommentIsStable(t *testing.T) {
 	t.Parallel()
 

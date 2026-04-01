@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -17,9 +18,23 @@ func runInit(ctx context.Context, program string, args []string, cwd string) err
 
 	fs := flag.NewFlagSet(program+" init", flag.ContinueOnError)
 	fs.SetOutput(nil)
+	fs.Usage = func() {}
 
 	rootFlag := fs.String("root", ".", "root directory to initialize")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return printFlagSetHelp(
+				os.Stdout,
+				fs,
+				cliName(program)+" init [flags] [root]",
+				"Create .semsearch state in a repository without building an index yet.",
+				[]string{
+					cliName(program) + " init",
+					cliName(program) + " init path/to/repo",
+				},
+				nil,
+			)
+		}
 		return err
 	}
 

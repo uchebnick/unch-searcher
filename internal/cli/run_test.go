@@ -218,6 +218,57 @@ func TestRunDispatchesBindCommand(t *testing.T) {
 	}
 }
 
+func TestRunRootHelp(t *testing.T) {
+	output := captureStdout(t, func() {
+		if err := Run("unch", []string{"--help"}); err != nil {
+			t.Fatalf("Run(--help) error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Local-first semantic code search for real code objects.") {
+		t.Fatalf("Run(--help) output = %q, want root summary", output)
+	}
+	if !strings.Contains(output, "Model selection:") {
+		t.Fatalf("Run(--help) output = %q, want model selection section", output)
+	}
+	if !strings.Contains(output, "unch help search") {
+		t.Fatalf("Run(--help) output = %q, want help example", output)
+	}
+}
+
+func TestRunSearchHelp(t *testing.T) {
+	output := captureStdout(t, func() {
+		if err := Run("unch", []string{"search", "--help"}); err != nil {
+			t.Fatalf("Run(search --help) error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Search the current index using semantic, lexical, or mixed retrieval.") {
+		t.Fatalf("Run(search --help) output = %q, want search summary", output)
+	}
+	if !strings.Contains(output, "--details") {
+		t.Fatalf("Run(search --help) output = %q, want --details flag", output)
+	}
+	if !strings.Contains(output, "Use the same embedding model for both index and search") {
+		t.Fatalf("Run(search --help) output = %q, want model note", output)
+	}
+}
+
+func TestRunRemoteHelp(t *testing.T) {
+	output := captureStdout(t, func() {
+		if err := Run("unch", []string{"remote", "--help"}); err != nil {
+			t.Fatalf("Run(remote --help) error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "remote sync") {
+		t.Fatalf("Run(remote --help) output = %q, want sync subcommand", output)
+	}
+	if !strings.Contains(output, "remote download") {
+		t.Fatalf("Run(remote --help) output = %q, want download subcommand", output)
+	}
+}
+
 func TestRunSearchRequiresQuery(t *testing.T) {
 	t.Parallel()
 

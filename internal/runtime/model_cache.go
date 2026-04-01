@@ -18,65 +18,145 @@ type Reporter interface {
 	ProgressTracker(label string) getter.ProgressTracker
 }
 
-const defaultEmbeddingModelURL = "https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/resolve/main/embeddinggemma-300M-Q8_0.gguf?download=true"
-
 type ModelCache struct{}
+
+type knownEmbeddingModel struct {
+	ID              string
+	DisplayName     string
+	Aliases         []string
+	DefaultFilename string
+	DownloadURL     string
+}
+
+var knownEmbeddingModels = []knownEmbeddingModel{
+	{
+		ID:              "embeddinggemma",
+		DisplayName:     "embeddinggemma-300m",
+		Aliases:         []string{"default", "embeddinggemma", "gemma", "embeddinggemma-300m"},
+		DefaultFilename: "embeddinggemma-300m.gguf",
+		DownloadURL:     "https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/resolve/main/embeddinggemma-300M-Q8_0.gguf?download=true",
+	},
+	{
+		ID:              "qwen3",
+		DisplayName:     "Qwen3-Embedding-0.6B",
+		Aliases:         []string{"qwen3", "qwen3-embedding", "qwen3embedding", "qwen"},
+		DefaultFilename: "Qwen3-Embedding-0.6B-Q8_0.gguf",
+		DownloadURL:     "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf?download=true",
+	},
+}
+
+func DefaultModelPath(modelsDir string) string {
+	return filepath.Join(modelsDir, defaultKnownEmbeddingModel().DefaultFilename)
+}
+
+func CanonicalModelPath(requestedPath string, defaultPath string) (string, error) {
+	selection, err := resolveModelSelection(requestedPath, defaultPath)
+	if err != nil {
+		return "", err
+	}
+	return selection.ResolvedPath, nil
+}
+
+func CanonicalModelID(requestedPath string, defaultPath string) (string, error) {
+	selection, err := resolveModelSelection(requestedPath, defaultPath)
+	if err != nil {
+		return "", err
+	}
+	return modelSelectionID(selection), nil
+}
 
 // ResolveOrInstallModelPath returns an existing GGUF model path or installs the default model when allowed.
 func (ModelCache) ResolveOrInstallModelPath(ctx context.Context, requestedPath string, defaultPath string, allowAutoDownload bool, reporter Reporter) (string, string, error) {
-	requestedPath = strings.TrimSpace(requestedPath)
-	if requestedPath == "" {
-		requestedPath = defaultPath
-	}
-
-	resolvedPath, err := filepath.Abs(requestedPath)
+	selection, err := resolveModelSelection(requestedPath, defaultPath)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve model path: %w", err)
+		return "", "", err
 	}
 
-	defaultResolvedPath, err := filepath.Abs(defaultPath)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve default model path: %w", err)
-	}
-
-	if info, err := os.Stat(resolvedPath); err == nil {
+	if info, err := os.Stat(selection.ResolvedPath); err == nil {
 		if !info.IsDir() {
-			return resolvedPath, "", nil
+			return selection.ResolvedPath, "", nil
 		}
 
-		if allowAutoDownload && filepath.Clean(resolvedPath) == filepath.Clean(defaultResolvedPath) {
-			note, err := installDefaultEmbeddingModel(ctx, resolvedPath, reporter)
+		if allowAutoDownload && selection.AutoDownload {
+			note, err := installEmbeddingModel(ctx, selection.ResolvedPath, selection.Profile, reporter)
 			if err != nil {
 				return "", "", err
 			}
-			return resolvedPath, note, nil
+			return selection.ResolvedPath, note, nil
 		}
 
-		nestedPath, err := findSingleGGUFFile(resolvedPath)
+		nestedPath, err := findSingleGGUFFile(selection.ResolvedPath)
 		if err == nil {
-			return nestedPath, fmt.Sprintf("using model file found in %s", resolvedPath), nil
+			return nestedPath, fmt.Sprintf("using model file found in %s", selection.ResolvedPath), nil
 		}
 
-		return "", "", fmt.Errorf("model path is a directory, expected a GGUF file: %s", resolvedPath)
+		return "", "", fmt.Errorf("model path is a directory, expected a GGUF file: %s", selection.ResolvedPath)
 	} else if !os.IsNotExist(err) {
 		return "", "", fmt.Errorf("stat model path: %w", err)
 	}
 
-	if allowAutoDownload && filepath.Clean(resolvedPath) == filepath.Clean(defaultResolvedPath) {
-		note, err := installDefaultEmbeddingModel(ctx, resolvedPath, reporter)
+	if allowAutoDownload && selection.AutoDownload {
+		note, err := installEmbeddingModel(ctx, selection.ResolvedPath, selection.Profile, reporter)
 		if err != nil {
 			return "", "", err
 		}
-		return resolvedPath, note, nil
+		return selection.ResolvedPath, note, nil
 	}
 
 	return "", "", fmt.Errorf(
-		"model file not found: %s; pass --model with an existing GGUF file or omit --model to auto-download the default embedding model",
-		resolvedPath,
+		"model file not found: %s; pass --model with an existing GGUF file or use a known model id such as embeddinggemma or qwen3",
+		selection.ResolvedPath,
 	)
 }
 
-func installDefaultEmbeddingModel(ctx context.Context, destPath string, reporter Reporter) (string, error) {
+type modelSelection struct {
+	ResolvedPath string
+	Profile      knownEmbeddingModel
+	AutoDownload bool
+}
+
+func resolveModelSelection(requestedPath string, defaultPath string) (modelSelection, error) {
+	defaultResolvedPath, err := filepath.Abs(defaultPath)
+	if err != nil {
+		return modelSelection{}, fmt.Errorf("resolve default model path: %w", err)
+	}
+
+	requestedPath = strings.TrimSpace(requestedPath)
+	if requestedPath == "" {
+		return modelSelection{
+			ResolvedPath: defaultResolvedPath,
+			Profile:      defaultKnownEmbeddingModel(),
+			AutoDownload: true,
+		}, nil
+	}
+
+	if profile, ok := resolveKnownEmbeddingModel(requestedPath); ok {
+		return modelSelection{
+			ResolvedPath: filepath.Join(filepath.Dir(defaultResolvedPath), profile.DefaultFilename),
+			Profile:      profile,
+			AutoDownload: true,
+		}, nil
+	}
+
+	resolvedPath, err := filepath.Abs(requestedPath)
+	if err != nil {
+		return modelSelection{}, fmt.Errorf("resolve model path: %w", err)
+	}
+
+	selection := modelSelection{ResolvedPath: resolvedPath}
+	if filepath.Clean(resolvedPath) == filepath.Clean(defaultResolvedPath) {
+		selection.Profile = defaultKnownEmbeddingModel()
+		selection.AutoDownload = true
+		return selection, nil
+	}
+	if profile, ok := recognizeKnownEmbeddingModelForPath(resolvedPath); ok {
+		selection.Profile = profile
+		selection.AutoDownload = true
+	}
+	return selection, nil
+}
+
+func installEmbeddingModel(ctx context.Context, destPath string, profile knownEmbeddingModel, reporter Reporter) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return "", fmt.Errorf("create model dir: %w", err)
 	}
@@ -100,7 +180,7 @@ func installDefaultEmbeddingModel(ctx context.Context, destPath string, reporter
 
 	url := strings.TrimSpace(os.Getenv("SEMSEARCH_MODEL_URL"))
 	if url == "" {
-		url = defaultEmbeddingModelURL
+		url = profile.DownloadURL
 	}
 
 	stagingDir, err := os.MkdirTemp(filepath.Dir(destPath), filepath.Base(destPath)+".tmp-*")
@@ -112,7 +192,7 @@ func installDefaultEmbeddingModel(ctx context.Context, destPath string, reporter
 	}()
 
 	if reporter != nil {
-		reporter.Logf("downloading default model from %s to %s", url, destPath)
+		reporter.Logf("downloading %s model from %s to %s", profile.DisplayName, url, destPath)
 	}
 
 	progress := download.ProgressTracker
@@ -121,7 +201,7 @@ func installDefaultEmbeddingModel(ctx context.Context, destPath string, reporter
 	}
 
 	if err := download.GetModelWithContext(ctx, url, stagingDir, progress); err != nil {
-		return "", fmt.Errorf("download default embedding model from %s: %w", url, err)
+		return "", fmt.Errorf("download %s model from %s: %w", profile.DisplayName, url, err)
 	}
 
 	modelFile, err := findSingleGGUFFile(stagingDir)
@@ -134,11 +214,68 @@ func installDefaultEmbeddingModel(ctx context.Context, destPath string, reporter
 	}
 
 	if err := activateModelFile(modelFile, destPath); err != nil {
-		return "", fmt.Errorf("activate downloaded model: %w", err)
+		return "", fmt.Errorf("activate downloaded %s model: %w", profile.DisplayName, err)
 	}
 
 	cleanupModelArtifacts(destPath, reporter)
-	return fmt.Sprintf("downloaded default model to %s", destPath), nil
+	return fmt.Sprintf("downloaded %s model to %s", profile.DisplayName, destPath), nil
+}
+
+func modelSelectionID(selection modelSelection) string {
+	if selection.Profile.ID != "" {
+		return selection.Profile.ID
+	}
+	return "custom:" + filepath.ToSlash(filepath.Clean(selection.ResolvedPath))
+}
+
+func defaultKnownEmbeddingModel() knownEmbeddingModel {
+	return knownEmbeddingModels[0]
+}
+
+func resolveKnownEmbeddingModel(value string) (knownEmbeddingModel, bool) {
+	token := normalizeModelToken(value)
+	if token == "" {
+		return knownEmbeddingModel{}, false
+	}
+	for _, model := range knownEmbeddingModels {
+		for _, alias := range model.Aliases {
+			if token == normalizeModelToken(alias) {
+				return model, true
+			}
+		}
+	}
+	return knownEmbeddingModel{}, false
+}
+
+func recognizeKnownEmbeddingModelForPath(modelPath string) (knownEmbeddingModel, bool) {
+	name, full := normalizedModelPath(modelPath)
+	for _, model := range knownEmbeddingModels {
+		switch model.ID {
+		case "embeddinggemma":
+			if strings.Contains(name, "embeddinggemma") || strings.Contains(full, "embeddinggemma") {
+				return model, true
+			}
+		case "qwen3":
+			if strings.Contains(name, "qwen3-embedding") ||
+				strings.Contains(name, "qwen3embedding") ||
+				(strings.Contains(full, "qwen3") && strings.Contains(full, "embed")) {
+				return model, true
+			}
+		}
+	}
+	return knownEmbeddingModel{}, false
+}
+
+func normalizedModelPath(modelPath string) (string, string) {
+	full := strings.ToLower(strings.TrimSpace(modelPath))
+	name := strings.ToLower(filepath.Base(full))
+	return name, full
+}
+
+func normalizeModelToken(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	replacer := strings.NewReplacer("-", "", "_", "", " ", "")
+	return replacer.Replace(value)
 }
 
 func repairInstalledModel(destPath string, reporter Reporter) (string, error) {

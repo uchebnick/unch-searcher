@@ -138,3 +138,89 @@ func TestResolveOrInstallModelPathUsesExistingFilesAndNestedGGUF(t *testing.T) {
 		t.Fatalf("expected error for missing explicit model path")
 	}
 }
+
+func TestResolveModelSelectionSupportsKnownAliases(t *testing.T) {
+	t.Parallel()
+
+	defaultPath := filepath.Join(t.TempDir(), "embeddinggemma-300m.gguf")
+
+	selection, err := resolveModelSelection("", defaultPath)
+	if err != nil {
+		t.Fatalf("resolveModelSelection(default) error: %v", err)
+	}
+	if got, want := selection.ResolvedPath, defaultPath; got != want {
+		t.Fatalf("resolveModelSelection(default) path = %q, want %q", got, want)
+	}
+	if !selection.AutoDownload || selection.Profile.ID != "embeddinggemma" {
+		t.Fatalf("resolveModelSelection(default) = %#v", selection)
+	}
+
+	qwenSelection, err := resolveModelSelection("qwen3", defaultPath)
+	if err != nil {
+		t.Fatalf("resolveModelSelection(qwen3) error: %v", err)
+	}
+	wantQwen := filepath.Join(filepath.Dir(defaultPath), "Qwen3-Embedding-0.6B-Q8_0.gguf")
+	if got := qwenSelection.ResolvedPath; got != wantQwen {
+		t.Fatalf("resolveModelSelection(qwen3) path = %q, want %q", got, wantQwen)
+	}
+	if !qwenSelection.AutoDownload || qwenSelection.Profile.ID != "qwen3" {
+		t.Fatalf("resolveModelSelection(qwen3) = %#v", qwenSelection)
+	}
+}
+
+func TestCanonicalModelPathSupportsAliases(t *testing.T) {
+	t.Parallel()
+
+	modelsDir := t.TempDir()
+	defaultPath := DefaultModelPath(modelsDir)
+
+	got, err := CanonicalModelPath("embeddinggemma", defaultPath)
+	if err != nil {
+		t.Fatalf("CanonicalModelPath(embeddinggemma) error: %v", err)
+	}
+	if got != defaultPath {
+		t.Fatalf("CanonicalModelPath(embeddinggemma) = %q, want %q", got, defaultPath)
+	}
+
+	got, err = CanonicalModelPath("qwen3", defaultPath)
+	if err != nil {
+		t.Fatalf("CanonicalModelPath(qwen3) error: %v", err)
+	}
+	want := filepath.Join(modelsDir, "Qwen3-Embedding-0.6B-Q8_0.gguf")
+	if got != want {
+		t.Fatalf("CanonicalModelPath(qwen3) = %q, want %q", got, want)
+	}
+}
+
+func TestCanonicalModelIDSupportsAliasesAndCustomPaths(t *testing.T) {
+	t.Parallel()
+
+	modelsDir := t.TempDir()
+	defaultPath := DefaultModelPath(modelsDir)
+
+	got, err := CanonicalModelID("embeddinggemma", defaultPath)
+	if err != nil {
+		t.Fatalf("CanonicalModelID(embeddinggemma) error: %v", err)
+	}
+	if got != "embeddinggemma" {
+		t.Fatalf("CanonicalModelID(embeddinggemma) = %q", got)
+	}
+
+	got, err = CanonicalModelID("qwen3", defaultPath)
+	if err != nil {
+		t.Fatalf("CanonicalModelID(qwen3) error: %v", err)
+	}
+	if got != "qwen3" {
+		t.Fatalf("CanonicalModelID(qwen3) = %q", got)
+	}
+
+	customPath := filepath.Join(modelsDir, "custom.gguf")
+	got, err = CanonicalModelID(customPath, defaultPath)
+	if err != nil {
+		t.Fatalf("CanonicalModelID(custom) error: %v", err)
+	}
+	want := "custom:" + filepath.ToSlash(customPath)
+	if got != want {
+		t.Fatalf("CanonicalModelID(custom) = %q, want %q", got, want)
+	}
+}

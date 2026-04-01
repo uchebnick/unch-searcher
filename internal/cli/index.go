@@ -20,14 +20,15 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 	var excludes stringListFlag
 
 	defaultDBPath := filepath.Join(paths.LocalDir, "index.db")
-	defaultModelPath := filepath.Join(paths.ModelsDir, "embeddinggemma-300m.gguf")
+	defaultModelPath := runtime.DefaultModelPath(paths.ModelsDir)
 
 	fs := flag.NewFlagSet(program+" index", flag.ContinueOnError)
 	fs.SetOutput(nil)
+	fs.Usage = func() {}
 
 	root := fs.String("root", ".", "root directory to index")
 	dbPath := fs.String("db", defaultDBPath, "path to sqlite db")
-	modelPath := fs.String("model", defaultModelPath, "path to GGUF embedding model")
+	modelPath := fs.String("model", defaultModelPath, "path to GGUF embedding model, or a known model id such as embeddinggemma or qwen3")
 	libPath := fs.String("lib", "", "path to yzma library directory, or to one of its shared library files")
 	contextPrefix := fs.String("context-prefix", "@filectx:", "legacy file context prefix used only by fallback indexers")
 	commentPrefix := fs.String("comment-prefix", "@search:", "legacy comment prefix used only by fallback indexers")
@@ -38,15 +39,31 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 	fs.Var(&excludes, "exclude", "exclude pattern; can be used multiple times")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return printFlagSetHelp(
+				os.Stdout,
+				fs,
+				cliName(program)+" index [flags]",
+				"Build or refresh the local search index for a repository.",
+				[]string{
+					cliName(program) + " index --root .",
+					cliName(program) + " index --exclude node_modules --exclude dist",
+					cliName(program) + " index --model qwen3",
+					cliName(program) + " index --model ~/.semsearch/models/Qwen3-Embedding-0.6B-Q8_0.gguf",
+				},
+				[]string{
+					"Omit --model to auto-download the default embeddinggemma GGUF model.",
+					"Known model ids today: embeddinggemma and qwen3.",
+					"Changing --model changes the embedding space; rebuild the index before searching with the new model.",
+					"--comment-prefix and --context-prefix are legacy fallback knobs for unsupported files or parser failures.",
+				},
+			)
+		}
 		return err
 	}
 
-	modelWasExplicit := false
 	dbWasExplicit := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "model" {
-			modelWasExplicit = true
-		}
 		if f.Name == "db" {
 			dbWasExplicit = true
 		}
@@ -94,7 +111,7 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 		s.Logf("%s", libNote)
 	}
 
-	resolvedModelPath, modelNote, err := models.ResolveOrInstallModelPath(ctx, *modelPath, defaultModelPath, !modelWasExplicit, s)
+	resolvedModelPath, modelNote, err := models.ResolveOrInstallModelPath(ctx, *modelPath, defaultModelPath, true, s)
 	if err != nil {
 		return err
 	}

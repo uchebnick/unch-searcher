@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -17,6 +18,9 @@ func runCreate(ctx context.Context, program string, args []string, cwd string) e
 	if len(args) == 0 {
 		return fmt.Errorf("create requires a target, for example: ci")
 	}
+	if isHelpArg(args[0]) {
+		return printCreateHelp(os.Stdout, cliName(program))
+	}
 
 	switch args[0] {
 	case "ci":
@@ -29,9 +33,23 @@ func runCreate(ctx context.Context, program string, args []string, cwd string) e
 func runCreateCI(program string, args []string) error {
 	fs := flag.NewFlagSet(program+" create ci", flag.ContinueOnError)
 	fs.SetOutput(nil)
+	fs.Usage = func() {}
 
 	rootFlag := fs.String("root", ".", "root directory where .github/workflows/searcher.yml will be created")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return printFlagSetHelp(
+				os.Stdout,
+				fs,
+				cliName(program)+" create ci [flags]",
+				"Create the searcher GitHub Actions workflow in the target repository.",
+				[]string{
+					cliName(program) + " create ci",
+					cliName(program) + " create ci --root ../other-repo",
+				},
+				nil,
+			)
+		}
 		return err
 	}
 

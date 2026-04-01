@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -18,6 +19,9 @@ func runBind(ctx context.Context, program string, args []string, cwd string) err
 	if len(args) == 0 {
 		return fmt.Errorf("bind requires a target, for example: ci")
 	}
+	if isHelpArg(args[0]) {
+		return printBindHelp(os.Stdout, cliName(program))
+	}
 
 	switch args[0] {
 	case "ci":
@@ -30,9 +34,23 @@ func runBind(ctx context.Context, program string, args []string, cwd string) err
 func runBindCI(program string, args []string) error {
 	fs := flag.NewFlagSet(program+" bind ci", flag.ContinueOnError)
 	fs.SetOutput(nil)
+	fs.Usage = func() {}
 
 	rootFlag := fs.String("root", ".", "root directory whose manifest should be bound to a GitHub repository or CI workflow")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return printFlagSetHelp(
+				os.Stdout,
+				fs,
+				cliName(program)+" bind ci [flags] <github-repo-or-workflow-url>",
+				"Bind the local manifest to a GitHub repository or a specific searcher workflow URL.",
+				[]string{
+					cliName(program) + " bind ci https://github.com/uchebnick/unch",
+					cliName(program) + " bind ci https://github.com/uchebnick/unch/actions/workflows/searcher.yml",
+				},
+				nil,
+			)
+		}
 		return err
 	}
 

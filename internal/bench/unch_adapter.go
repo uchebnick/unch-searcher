@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	appruntime "github.com/uchebnick/unch/internal/runtime"
 )
 
 var (
@@ -56,10 +58,15 @@ func (a *UnchAdapter) Prepare(ctx context.Context, env Environment) error {
 
 	a.version = gitDescribe(ctx, env.RepoRoot)
 
+	defaultModelPath := appruntime.DefaultModelPath(filepath.Join(env.SemsearchHome, "models"))
 	if toolModel := strings.TrimSpace(env.ToolOptions["model"]); toolModel != "" {
-		a.modelPath = toolModel
+		resolvedModelPath, err := appruntime.CanonicalModelPath(toolModel, defaultModelPath)
+		if err != nil {
+			return fmt.Errorf("resolve benchmark model path: %w", err)
+		}
+		a.modelPath = resolvedModelPath
 	} else {
-		a.modelPath = filepath.Join(env.SemsearchHome, "models", "embeddinggemma-300m.gguf")
+		a.modelPath = defaultModelPath
 	}
 	if toolLib := strings.TrimSpace(env.ToolOptions["lib"]); toolLib != "" {
 		a.libPath = toolLib

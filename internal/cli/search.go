@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -19,14 +20,15 @@ import (
 
 func runSearch(ctx context.Context, program string, args []string, paths semsearch.Paths, s *termui.Session, _ indexing.FileScanner, runtimes runtime.YzmaResolver, models runtime.ModelCache) error {
 	defaultDBPath := filepath.Join(paths.LocalDir, "index.db")
-	defaultModelPath := filepath.Join(paths.ModelsDir, "embeddinggemma-300m.gguf")
+	defaultModelPath := runtime.DefaultModelPath(paths.ModelsDir)
 
 	fs := flag.NewFlagSet(program+" search", flag.ContinueOnError)
 	fs.SetOutput(nil)
+	fs.Usage = func() {}
 
 	root := fs.String("root", ".", "root directory used to format result paths")
 	dbPath := fs.String("db", defaultDBPath, "path to sqlite db")
-	modelPath := fs.String("model", defaultModelPath, "path to GGUF embedding model")
+	modelPath := fs.String("model", defaultModelPath, "path to GGUF embedding model, or a known model id such as embeddinggemma or qwen3")
 	libPath := fs.String("lib", "", "path to yzma library directory, or to one of its shared library files")
 	queryFlag := fs.String("query", "", "search query; if empty, remaining args are joined")
 	commentPrefix := fs.String("comment-prefix", "@search:", "legacy comment prefix used only by fallback indexers")
@@ -40,6 +42,27 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 	verbose := fs.Bool("verbose", false, "enable yzma verbose logging")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return printFlagSetHelp(
+				os.Stdout,
+				fs,
+				cliName(program)+" search [flags] <query>",
+				"Search the current index using semantic, lexical, or mixed retrieval.",
+				[]string{
+					cliName(program) + " search \"sqlite schema\"",
+					cliName(program) + " search --mode lexical \"Run\"",
+					cliName(program) + " search --details \"get path variables from a request\"",
+					cliName(program) + " search --model qwen3 \"search query\"",
+					cliName(program) + " search --model ~/.semsearch/models/Qwen3-Embedding-0.6B-Q8_0.gguf \"search query\"",
+				},
+				[]string{
+					"Omit --model to reuse the default embeddinggemma GGUF model.",
+					"Known model ids today: embeddinggemma and qwen3.",
+					"Use the same embedding model for both index and search, otherwise ranking quality will be wrong.",
+					"Switching models requires rebuilding the index with `unch index` first.",
+				},
+			)
+		}
 		return err
 	}
 
@@ -56,12 +79,8 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 		return err
 	}
 
-	modelWasExplicit := false
 	dbWasExplicit := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "model" {
-			modelWasExplicit = true
-		}
 		if f.Name == "db" {
 			dbWasExplicit = true
 		}
@@ -101,7 +120,7 @@ func runSearch(ctx context.Context, program string, args []string, paths semsear
 		s.Logf("%s", libNote)
 	}
 
-	resolvedModelPath, modelNote, err := models.ResolveOrInstallModelPath(ctx, *modelPath, defaultModelPath, !modelWasExplicit, s)
+	resolvedModelPath, modelNote, err := models.ResolveOrInstallModelPath(ctx, *modelPath, defaultModelPath, true, s)
 	if err != nil {
 		return err
 	}
