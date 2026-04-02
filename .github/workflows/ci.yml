@@ -175,8 +175,16 @@ jobs:
           $buildDir = Join-Path $env:RUNNER_TEMP "build"
           New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
           New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
           $env:CGO_ENABLED = "1"
+          gcc --version
           go build -trimpath -o (Join-Path $buildDir "unch.exe") .
+          if ($LASTEXITCODE -ne 0) {
+            throw "go build failed on Windows install-smoke step"
+          }
+          if (-not (Test-Path (Join-Path $buildDir "unch.exe"))) {
+            throw "expected $(Join-Path $buildDir 'unch.exe') to exist after go build"
+          }
           Compress-Archive -Path (Join-Path $buildDir "unch.exe") -DestinationPath (Join-Path $assetDir "${{ matrix.asset_name }}") -Force
 
       - name: Install from local asset with shell installer

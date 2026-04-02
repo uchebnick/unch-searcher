@@ -83,8 +83,16 @@ jobs:
           CC: gcc
         run: |
           New-Item -ItemType Directory -Force -Path dist/build | Out-Null
+          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
           $env:CGO_ENABLED = "1"
+          gcc --version
           go build -trimpath -o dist/build/unch.exe .
+          if ($LASTEXITCODE -ne 0) {
+            throw "go build failed on Windows release build step"
+          }
+          if (-not (Test-Path "dist/build/unch.exe")) {
+            throw "expected dist/build/unch.exe to exist after go build"
+          }
           Compress-Archive -Path dist/build/unch.exe -DestinationPath "dist/${{ matrix.asset_name }}"
 
       - name: Upload artifact
