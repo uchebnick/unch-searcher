@@ -137,9 +137,7 @@ jobs:
             label: windows
             asset_name: unch_Windows_x86_64.zip
             msystem: UCRT64
-            msys_pkg: >-
-              mingw-w64-ucrt-x86_64-gcc
-              zip
+            msys_pkg: mingw-w64-ucrt-x86_64-gcc
 
     steps:
       - name: Checkout
@@ -174,14 +172,20 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          asset_dir="$(cygpath -u "$RUNNER_TEMP")/release-assets"
           build_dir="$(cygpath -u "$RUNNER_TEMP")/build"
-          mkdir -p "${asset_dir}" "${build_dir}"
+          mkdir -p "${build_dir}"
           export CGO_ENABLED=1
           export CC=gcc
           go build -trimpath -o "${build_dir}/unch.exe" .
-          cd "${build_dir}"
-          zip -q "${asset_dir}/${{ matrix.asset_name }}" unch.exe
+
+      - name: Archive local Windows release asset
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $assetDir = Join-Path $env:RUNNER_TEMP "release-assets"
+          $buildDir = Join-Path $env:RUNNER_TEMP "build"
+          New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
+          Compress-Archive -Path (Join-Path $buildDir "unch.exe") -DestinationPath (Join-Path $assetDir "${{ matrix.asset_name }}") -Force
 
       - name: Install from local asset with shell installer
         if: runner.os != 'Windows'
