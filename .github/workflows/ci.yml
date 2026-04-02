@@ -102,8 +102,17 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run tests
-        run: go test ./...
+      - name: Build all packages
+        run: go build ./...
+
+      - name: Run portable test suite
+        run: |
+          go test \
+            ./internal/bench \
+            ./internal/indexing \
+            ./internal/runtime \
+            ./internal/search \
+            ./internal/termui
 
   coverage:
     name: coverage
