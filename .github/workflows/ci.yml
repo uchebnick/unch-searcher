@@ -116,6 +116,90 @@ jobs:
       - name: Run portable test suite
         run: go test ${{ env.PORTABLE_TEST_PACKAGES }}
 
+  install-smoke:
+    name: install-smoke (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+            asset_name: unch_Linux_x86_64.tar.gz
+            shell_name: bash
+          - os: macos-14
+            label: macos
+            asset_name: unch_Darwin_arm64.tar.gz
+            shell_name: bash
+          - os: windows-latest
+            label: windows
+            asset_name: unch_Windows_x86_64.zip
+            shell_name: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup MSYS2 toolchain
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+
+      - name: Build local Unix release asset
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_dir="${RUNNER_TEMP}/release-assets"
+          mkdir -p "${asset_dir}" "${RUNNER_TEMP}/build"
+          CGO_ENABLED=1 go build -trimpath -o "${RUNNER_TEMP}/build/unch" .
+          tar -C "${RUNNER_TEMP}/build" -czf "${asset_dir}/${{ matrix.asset_name }}" unch
+
+      - name: Build local Windows release asset
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CC: gcc
+        run: |
+          $assetDir = Join-Path $env:RUNNER_TEMP "release-assets"
+          $buildDir = Join-Path $env:RUNNER_TEMP "build"
+          New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+          $env:CGO_ENABLED = "1"
+          go build -trimpath -o (Join-Path $buildDir "unch.exe") .
+          Compress-Archive -Path (Join-Path $buildDir "unch.exe") -DestinationPath (Join-Path $assetDir "${{ matrix.asset_name }}") -Force
+
+      - name: Install from local asset with shell installer
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          UNCH_INSTALL_ASSET_DIR: ${{ runner.temp }}/release-assets
+        run: |
+          set -euo pipefail
+          bin_dir="${RUNNER_TEMP}/unch-bin"
+          ./install.sh -b "${bin_dir}" -v vci-test
+          "${bin_dir}/unch" --help >/dev/null
+
+      - name: Install from local asset with PowerShell installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          UNCH_INSTALL_ASSET_DIR: ${{ runner.temp }}\release-assets
+        run: |
+          $binDir = Join-Path $env:RUNNER_TEMP "unch-bin"
+          .\install\install.ps1 -BinDir $binDir -Version vci-test
+          & (Join-Path $binDir "unch.exe") --help | Out-Null
+
   coverage:
     name: coverage
     runs-on: ubuntu-latest
