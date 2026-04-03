@@ -37,7 +37,7 @@ For release-based installs without Homebrew:
 curl -fsSL https://raw.githubusercontent.com/uchebnick/unch/main/install.sh | sh
 ```
 
-On Windows x86_64, use the PowerShell installer:
+On Windows, use the PowerShell installer:
 
 ```powershell
 iwr https://raw.githubusercontent.com/uchebnick/unch/main/install/install.ps1 -useb | iex
@@ -59,9 +59,9 @@ Published release archives currently cover:
 
 - macOS: `arm64`, `x86_64`
 - Linux: `arm64`, `x86_64`
-- Windows: `x86_64` (`unch.exe`)
+- Windows: `arm64`, `x86_64` (`unch.exe`)
 
-On those supported macOS, Linux, and Windows x86_64 targets, the installers use published release archives by default, so Go is not required. `install.sh` and `install/install.ps1` only fall back to `go install` when a matching release archive is not available.
+On those supported macOS, Linux, and Windows targets, the installers use published release archives by default, so Go is not required. `install.sh` and `install/install.ps1` only fall back to `go install` when a matching release archive is not available.
 
 See [Compatibility](docs/compatibility.md) for the support matrix and upgrade rules, and [Benchmarks](docs/benchmarks.md) for the pinned benchmark suite, score formula, and current sample results.
 

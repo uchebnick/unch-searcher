@@ -3,6 +3,7 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,9 +18,24 @@ env:
 
 jobs:
   benchmark:
-    name: benchmark-suite
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-    runs-on: ubuntu-latest
+    name: benchmark-suite (${{ matrix.label }})
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+          - os: windows-latest
+            label: windows-x86_64
+            msystem: UCRT64
+            msys_pkg: mingw-w64-ucrt-x86_64-gcc
+          - os: windows-11-arm
+            label: windows-arm64
+            msystem: CLANGARM64
+            msys_pkg: mingw-w64-clang-aarch64-gcc
 
     env:
       SEMSEARCH_YZMA_VERSION: b8581
@@ -34,15 +50,30 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Setup MSYS2 toolchain
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          path-type: inherit
+          update: true
+          install: ${{ matrix.msys_pkg }}
+
       - name: Restore benchmark cache
         uses: actions/cache@v5
         with:
           path: ${{ env.UNCH_BENCH_ROOT }}/cache
-          key: benchmark-${{ runner.os }}-${{ hashFiles('benchmarks/suites/smoke.json', 'go.mod') }}
+          key: benchmark-${{ runner.os }}-${{ matrix.label }}-${{ hashFiles('benchmarks/suites/smoke.json', 'go.mod') }}
           restore-keys: |
-            benchmark-${{ runner.os }}-
+            benchmark-${{ runner.os }}-${{ matrix.label }}-
 
       - name: Run benchmark suite
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -57,13 +88,36 @@ jobs:
             -output "${GITHUB_WORKSPACE}/benchmarks/results/ci-benchmark.json" \
             2>&1 | tee "${GITHUB_WORKSPACE}/benchmarks/results/ci-benchmark.log"
 
+      - name: Run benchmark suite
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = "1"
+          $env:CC = "gcc"
+          $resultsDir = Join-Path $env:GITHUB_WORKSPACE "benchmarks\results"
+          $suitePath = Join-Path $env:GITHUB_WORKSPACE "benchmarks\suites\smoke.json"
+          $jsonPath = Join-Path $resultsDir "ci-benchmark.json"
+          $logPath = Join-Path $resultsDir "ci-benchmark.log"
+          New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
+          & go run ./cmd/bench `
+            -suite $suitePath `
+            -bench-root $env:UNCH_BENCH_ROOT `
+            -cold-index-runs 1 `
+            -warm-index-runs 1 `
+            -warm-search-runs 1 `
+            -results-dir $resultsDir `
+            -output $jsonPath 2>&1 | Tee-Object -FilePath $logPath
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Render benchmark summary
         if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
           if [ -f benchmarks/results/ci-benchmark.json ]; then
-            python3 scripts/render_benchmark_summary.py benchmarks/results/ci-benchmark.json >> "$GITHUB_STEP_SUMMARY"
+            python scripts/render_benchmark_summary.py benchmarks/results/ci-benchmark.json >> "$GITHUB_STEP_SUMMARY"
           else
             {
               echo "## Benchmark"
@@ -84,7 +138,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
-          name: benchmark-report
+          name: benchmark-report-${{ matrix.label }}
           path: benchmarks/results/
           if-no-files-found: warn
 
@@ -118,6 +172,14 @@ jobs:
             label: linux
           - os: macos-14
             label: macos
+          - os: windows-latest
+            label: windows-x86_64
+            msystem: UCRT64
+            msys_pkg: mingw-w64-ucrt-x86_64-gcc
+          - os: windows-11-arm
+            label: windows-arm64
+            msystem: CLANGARM64
+            msys_pkg: mingw-w64-clang-aarch64-gcc
 
     steps:
       - name: Checkout
@@ -128,11 +190,45 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Setup MSYS2 toolchain
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          path-type: inherit
+          update: true
+          install: ${{ matrix.msys_pkg }}
+
       - name: Build all packages
+        if: runner.os != 'Windows'
         run: go build ./...
 
+      - name: Build all packages
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = "1"
+          $env:CC = "gcc"
+          go build ./...
+
       - name: Run portable test suite
+        if: runner.os != 'Windows'
         run: go test ${{ env.PORTABLE_TEST_PACKAGES }}
+
+      - name: Run portable test suite
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = "1"
+          $env:CC = "gcc"
+          $packages = @(
+            "./internal/bench",
+            "./internal/indexing",
+            "./internal/runtime",
+            "./internal/search",
+            "./internal/termui"
+          )
+          go test @packages
 
   install-smoke:
     name: install-smoke (${{ matrix.label }})
@@ -152,10 +248,15 @@ jobs:
             label: macos
             asset_name: unch_Darwin_arm64.tar.gz
           - os: windows-latest
-            label: windows
+            label: windows-x86_64
             asset_name: unch_Windows_x86_64.zip
             msystem: UCRT64
             msys_pkg: mingw-w64-ucrt-x86_64-gcc
+          - os: windows-11-arm
+            label: windows-arm64
+            asset_name: unch_Windows_arm64.zip
+            msystem: CLANGARM64
+            msys_pkg: mingw-w64-clang-aarch64-gcc
 
     steps:
       - name: Checkout
