@@ -31,12 +31,12 @@ jobs:
           - os: windows-latest
             label: windows-x86_64
             msystem: UCRT64
-            msys_pkg: mingw-w64-ucrt-x86_64-gcc
+            msys_pkg: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sqlite3
             cc: gcc
           - os: windows-11-arm
             label: windows-arm64
             msystem: CLANGARM64
-            msys_pkg: mingw-w64-clang-aarch64-clang
+            msys_pkg: mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-sqlite3
             cc: clang
 
     env:
@@ -177,12 +177,12 @@ jobs:
           - os: windows-latest
             label: windows-x86_64
             msystem: UCRT64
-            msys_pkg: mingw-w64-ucrt-x86_64-gcc
+            msys_pkg: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sqlite3
             cc: gcc
           - os: windows-11-arm
             label: windows-arm64
             msystem: CLANGARM64
-            msys_pkg: mingw-w64-clang-aarch64-clang
+            msys_pkg: mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-sqlite3
             cc: clang
 
     steps:
@@ -255,13 +255,13 @@ jobs:
             label: windows-x86_64
             asset_name: unch_Windows_x86_64.zip
             msystem: UCRT64
-            msys_pkg: mingw-w64-ucrt-x86_64-gcc
+            msys_pkg: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sqlite3
             cc: gcc
           - os: windows-11-arm
             label: windows-arm64
             asset_name: unch_Windows_arm64.zip
             msystem: CLANGARM64
-            msys_pkg: mingw-w64-clang-aarch64-clang
+            msys_pkg: mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-sqlite3
             cc: clang
 
     steps:
