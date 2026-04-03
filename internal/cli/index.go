@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/uchebnick/unch/internal/embed/llama"
+	"github.com/uchebnick/unch/internal/filehashdb"
 	"github.com/uchebnick/unch/internal/indexdb"
 	"github.com/uchebnick/unch/internal/indexing"
 	"github.com/uchebnick/unch/internal/runtime"
@@ -103,6 +104,64 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 		resolvedDBPath = filepath.Join(targetPaths.LocalDir, "index.db")
 	}
 
+	modelID, err := runtime.CanonicalModelID(*modelPath, defaultModelPath)
+	if err != nil {
+		return fmt.Errorf("resolve model id: %w", err)
+	}
+	resolvedGitignore, err := indexing.ResolveGitignorePath(rootAbs, *gitignorePath)
+	if err != nil {
+		return fmt.Errorf("resolve gitignore: %w", err)
+	}
+
+	hashStore, err := filehashdb.Open(ctx, targetPaths.FileHashDB)
+	if err != nil {
+		return fmt.Errorf("open file hash db: %w", err)
+	}
+	defer func() {
+		_ = hashStore.Close()
+	}()
+
+	fileHashes, err := indexing.CollectFileHashes(rootAbs, resolvedGitignore, excludes)
+	if err != nil {
+		return fmt.Errorf("collect file hashes: %w", err)
+	}
+	scannerFingerprint := indexing.BuildScannerFingerprint(*commentPrefix, *contextPrefix, excludes)
+
+	s.Logf("file_hashes=%d", len(fileHashes))
+	s.Logf("scanner_fingerprint=%s", scannerFingerprint)
+
+	var currentFileHashes map[string]string
+	skipped, err := maybeSkipUnchangedIndex(
+		ctx,
+		targetPaths,
+		resolvedDBPath,
+		dbWasExplicit,
+		currentManifest,
+		hashStore,
+		modelID,
+		scannerFingerprint,
+		fileHashes,
+		s,
+	)
+	if err != nil {
+		return err
+	}
+	if skipped {
+		return nil
+	}
+
+	if currentState, ok, err := hashStore.Current(ctx, modelID); err != nil {
+		return fmt.Errorf("read current file hash state: %w", err)
+	} else if ok && currentState.ScannerFingerprint == scannerFingerprint {
+		currentFileHashes = currentState.Files
+	}
+
+	fileHashStateVersion, err := hashStore.BeginState(ctx, modelID, scannerFingerprint)
+	if err != nil {
+		return fmt.Errorf("begin file hash state: %w", err)
+	}
+	s.Logf("staged_file_hash_state_version=%d", fileHashStateVersion)
+
 	resolvedLibPath, libNote, err := runtimes.ResolveOrInstallYzmaLibPath(ctx, *libPath, targetPaths.LocalDir, s)
 	if err != nil {
 		return err
@@ -118,10 +177,7 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 	if modelNote != "" {
 		s.Logf("%s", modelNote)
 	}
-	modelID, err := runtime.CanonicalModelID(*modelPath, defaultModelPath)
-	if err != nil {
-		return fmt.Errorf("resolve model id: %w", err)
-	}
+
 	resolvedContextSize := *contextSize
 	if resolvedContextSize <= 0 {
 		resolvedContextSize = defaultContextSize(resolvedModelPath)
@@ -129,11 +185,6 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 	resolvedBatchSize := *batchSize
 	if resolvedBatchSize <= 0 {
 		resolvedBatchSize = defaultBatchSize(resolvedModelPath)
-	}
-
-	resolvedGitignore, err := indexing.ResolveGitignorePath(rootAbs, *gitignorePath)
-	if err != nil {
-		return fmt.Errorf("resolve gitignore: %w", err)
 	}
 
 	s.Logf("db=%s", resolvedDBPath)
@@ -169,15 +220,19 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 		Scanner:  scanner,
 		Repo:     repo,
 		Embedder: embedder,
+		Hashes:   hashStore,
 	}
 
 	result, err := service.Run(ctx, indexing.Params{
-		Root:          rootAbs,
-		GitignorePath: resolvedGitignore,
-		Excludes:      excludes,
-		ContextPrefix: *contextPrefix,
-		CommentPrefix: *commentPrefix,
-		ModelID:       modelID,
+		Root:                 rootAbs,
+		GitignorePath:        resolvedGitignore,
+		Excludes:             excludes,
+		ContextPrefix:        *contextPrefix,
+		CommentPrefix:        *commentPrefix,
+		ModelID:              modelID,
+		CurrentFileHashes:    currentFileHashes,
+		NextFileHashes:       fileHashes,
+		FileHashStateVersion: fileHashStateVersion,
 	}, s)
 	if err != nil {
 		return err
@@ -189,6 +244,14 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 	}
 	s.Logf("manifest version=%d indexing_hash=%s", manifest.Version, manifest.IndexingHash)
 
+	if err := hashStore.ActivateState(ctx, modelID, fileHashStateVersion); err != nil {
+		return fmt.Errorf("activate file hash state: %w", err)
+	}
+	if err := hashStore.CleanupInactiveStates(ctx); err != nil {
+		return fmt.Errorf("cleanup inactive file hash states: %w", err)
+	}
+	s.Logf("file_hash_state_version=%d", fileHashStateVersion)
+
 	if result.IndexedSymbols == 0 {
 		s.Finish("No symbols found")
 		return nil
@@ -196,4 +259,45 @@ func runIndex(ctx context.Context, program string, args []string, paths semsearc
 
 	s.Finish(fmt.Sprintf("Indexed %d symbols in %d files", result.IndexedSymbols, result.IndexedFiles))
 	return nil
+}
+
+func maybeSkipUnchangedIndex(
+	ctx context.Context,
+	paths semsearch.Paths,
+	resolvedDBPath string,
+	dbWasExplicit bool,
+	currentManifest semsearch.Manifest,
+	hashStore *filehashdb.Store,
+	modelID string,
+	scannerFingerprint string,
+	fileHashes map[string]string,
+	s *termui.Session,
+) (bool, error) {
+	defaultDBPath := filepath.Join(paths.LocalDir, "index.db")
+	if dbWasExplicit || resolvedDBPath != defaultDBPath {
+		return false, nil
+	}
+	if currentManifest.Version <= 0 || semsearch.HasRemoteBinding(currentManifest) {
+		return false, nil
+	}
+	if _, err := os.Stat(resolvedDBPath); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat current index db: %w", err)
+	}
+
+	match, fileHashStateVersion, err := hashStore.Matches(ctx, modelID, scannerFingerprint, fileHashes)
+	if err != nil {
+		return false, fmt.Errorf("compare file hash state: %w", err)
+	}
+	if !match {
+		return false, nil
+	}
+
+	if s != nil {
+		s.Logf("file_hash_state_version=%d", fileHashStateVersion)
+		s.Finish("Index already up to date")
+	}
+	return true, nil
 }

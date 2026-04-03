@@ -154,6 +154,18 @@ func (s *Store) CurrentSnapshot(ctx context.Context, modelID string) (int64, err
 	return snapshotID, nil
 }
 
+// CurrentSnapshotIfAny returns the active snapshot for one model family when present.
+func (s *Store) CurrentSnapshotIfAny(ctx context.Context, modelID string) (int64, bool, error) {
+	snapshotID, err := s.CurrentSnapshot(ctx, modelID)
+	if err != nil {
+		if errors.Is(err, ErrNoActiveSnapshot) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	return snapshotID, true, nil
+}
+
 // ActivateSnapshot marks one snapshot as the active searchable snapshot for its model family.
 func (s *Store) ActivateSnapshot(ctx context.Context, modelID string, snapshotID int64) error {
 	_, err := s.db.ExecContext(
@@ -250,6 +262,58 @@ func (s *Store) InsertSymbol(ctx context.Context, snapshotID int64, modelID stri
 		return fmt.Errorf("insert symbol: %w", err)
 	}
 	return nil
+}
+
+// CopyPathFromSnapshot copies all symbol rows for one path from an existing snapshot into a building snapshot.
+func (s *Store) CopyPathFromSnapshot(ctx context.Context, modelID string, srcSnapshotID, dstSnapshotID int64, path string) (int, error) {
+	result, err := s.db.ExecContext(
+		ctx,
+		`INSERT INTO snapshot_symbols(
+			snapshot_id,
+			model_id,
+			path,
+			line,
+			symbol_id,
+			symbol_kind,
+			symbol_name,
+			symbol_container,
+			qualified_name,
+			signature,
+			documentation,
+			body,
+			embedding_hash
+		)
+		SELECT
+			?,
+			model_id,
+			path,
+			line,
+			symbol_id,
+			symbol_kind,
+			symbol_name,
+			symbol_container,
+			qualified_name,
+			signature,
+			documentation,
+			body,
+			embedding_hash
+		FROM snapshot_symbols
+		WHERE model_id = ?
+		  AND snapshot_id = ?
+		  AND path = ?`,
+		dstSnapshotID,
+		modelID,
+		srcSnapshotID,
+		path,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("copy symbols for %s: %w", path, err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read copied rows for %s: %w", path, err)
+	}
+	return int(rowsAffected), nil
 }
 
 // CleanupInactiveSnapshots removes building or stale snapshots that are not active for any model family.

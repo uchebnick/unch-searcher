@@ -11,6 +11,7 @@ import (
 type Paths struct {
 	LocalDir     string
 	ManifestPath string
+	FileHashDB   string
 	ModelsDir    string
 }
 
@@ -34,6 +35,7 @@ func PreparePaths(root string) (Paths, error) {
 	return Paths{
 		LocalDir:     localDir,
 		ManifestPath: ManifestFilePath(localDir),
+		FileHashDB:   filepath.Join(localDir, "filehashes.db"),
 		ModelsDir:    modelsDir,
 	}, nil
 }

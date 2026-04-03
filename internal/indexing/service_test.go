@@ -9,27 +9,46 @@ type testScanner struct {
 	jobs []FileJob
 }
 
-func (s testScanner) CollectJobs(root string, gitignorePath string, extraPatterns []string, commentPrefix string, contextPrefix string) ([]FileJob, int, error) {
-	total := 0
+func (s testScanner) WalkFiles(root string, gitignorePath string, extraPatterns []string, visit func(path string, rel string, source []byte) error) error {
 	for _, job := range s.jobs {
-		total += len(job.Symbols)
+		if err := visit(job.SourcePath, job.Path, []byte(job.Path)); err != nil {
+			return err
+		}
 	}
-	return s.jobs, total, nil
+	return nil
+}
+
+func (s testScanner) CollectJob(path string, rel string, source []byte, commentPrefix string, contextPrefix string) (FileJob, bool, error) {
+	for _, job := range s.jobs {
+		if job.Path == rel {
+			return job, len(job.Symbols) > 0, nil
+		}
+	}
+	return FileJob{Path: rel, SourcePath: path}, false, nil
 }
 
 type testRepo struct {
-	snapshotID int64
-	existing   map[string]bool
-	added      []string
-	inserts    []string
-	models     []string
-	activated  int64
-	cleaned    bool
+	snapshotID        int64
+	currentSnapshotID int64
+	existing          map[string]bool
+	copyCounts        map[string]int
+	added             []string
+	inserts           []string
+	copies            []string
+	models            []string
+	activated         int64
+	cleaned           bool
 }
 
 func (r *testRepo) BeginSnapshot(ctx context.Context, modelID string) (int64, error) {
 	r.models = append(r.models, modelID)
 	return r.snapshotID, nil
+}
+func (r *testRepo) CurrentSnapshotIfAny(ctx context.Context, modelID string) (int64, bool, error) {
+	if r.currentSnapshotID == 0 {
+		return 0, false, nil
+	}
+	return r.currentSnapshotID, true, nil
 }
 func (r *testRepo) ActivateSnapshot(ctx context.Context, modelID string, snapshotID int64) error {
 	r.models = append(r.models, modelID)
@@ -47,11 +66,30 @@ func (r *testRepo) InsertSymbol(ctx context.Context, snapshotID int64, modelID s
 	r.inserts = append(r.inserts, path)
 	return nil
 }
+func (r *testRepo) CopyPathFromSnapshot(ctx context.Context, modelID string, srcSnapshotID, dstSnapshotID int64, path string) (int, error) {
+	r.copies = append(r.copies, path)
+	if r.copyCounts != nil {
+		return r.copyCounts[path], nil
+	}
+	return 0, nil
+}
 func (r *testRepo) CleanupInactiveSnapshots(ctx context.Context) error {
 	r.cleaned = true
 	return nil
 }
 func (r *testRepo) CleanupUnusedEmbeddings(ctx context.Context) error { return nil }
+
+type testHashStore struct {
+	inserted map[string]string
+}
+
+func (h *testHashStore) InsertFileHash(ctx context.Context, stateVersion int64, path string, contentHash string) error {
+	if h.inserted == nil {
+		h.inserted = make(map[string]string)
+	}
+	h.inserted[path] = contentHash
+	return nil
+}
 
 type testEmbedder struct {
 	hashCalls  int
@@ -97,14 +135,17 @@ func TestServiceRunIndexesComments(t *testing.T) {
 		Scanner:  scanner,
 		Repo:     repo,
 		Embedder: embedder,
+		Hashes:   &testHashStore{},
 	}
 
 	result, err := service.Run(context.Background(), Params{
-		Root:          "/tmp",
-		GitignorePath: "/tmp/.gitignore",
-		CommentPrefix: "@search:",
-		ContextPrefix: "@filectx:",
-		ModelID:       "qwen3",
+		Root:                 "/tmp",
+		GitignorePath:        "/tmp/.gitignore",
+		CommentPrefix:        "@search:",
+		ContextPrefix:        "@filectx:",
+		ModelID:              "qwen3",
+		NextFileHashes:       map[string]string{"a.go": "a.go"},
+		FileHashStateVersion: 1,
 	}, reporter)
 	if err != nil {
 		t.Fatalf("Service.Run() error: %v", err)
@@ -156,9 +197,73 @@ func TestServiceRunHonorsContextCancellation(t *testing.T) {
 		},
 		Repo:     &testRepo{snapshotID: 1, existing: map[string]bool{}},
 		Embedder: &testEmbedder{},
+		Hashes:   &testHashStore{},
 	}
 
 	if _, err := service.Run(ctx, Params{}, nil); err == nil {
 		t.Fatalf("expected context cancellation error")
+	}
+}
+
+func TestServiceRunCopiesUnchangedFilesFromCurrentSnapshot(t *testing.T) {
+	t.Parallel()
+
+	scanner := testScanner{
+		jobs: []FileJob{
+			{Path: "a.go", SourcePath: "/tmp/a.go", Symbols: []IndexedSymbol{
+				{Line: 1, Kind: "function", Name: "A", QualifiedName: "A"},
+			}},
+			{Path: "b.go", SourcePath: "/tmp/b.go", Symbols: []IndexedSymbol{
+				{Line: 2, Kind: "function", Name: "B", QualifiedName: "B"},
+			}},
+		},
+	}
+	repo := &testRepo{
+		snapshotID:        8,
+		currentSnapshotID: 3,
+		existing:          map[string]bool{"b.go:B": true},
+		copyCounts:        map[string]int{"a.go": 1},
+	}
+	hashes := &testHashStore{}
+	embedder := &testEmbedder{}
+
+	service := Service{
+		Scanner:  scanner,
+		Repo:     repo,
+		Embedder: embedder,
+		Hashes:   hashes,
+	}
+
+	result, err := service.Run(context.Background(), Params{
+		Root:                 "/tmp",
+		GitignorePath:        "/tmp/.gitignore",
+		CommentPrefix:        "@search:",
+		ContextPrefix:        "@filectx:",
+		ModelID:              "embeddinggemma",
+		CurrentFileHashes:    map[string]string{"a.go": "a.go", "b.go": "old"},
+		NextFileHashes:       map[string]string{"a.go": "a.go", "b.go": "b.go"},
+		FileHashStateVersion: 2,
+	}, &testReporter{})
+	if err != nil {
+		t.Fatalf("Service.Run() error: %v", err)
+	}
+
+	if result.Version != 8 {
+		t.Fatalf("Service.Run().Version = %d, want 8", result.Version)
+	}
+	if result.IndexedFiles != 2 || result.IndexedSymbols != 2 {
+		t.Fatalf("Service.Run() result = %+v", result)
+	}
+	if len(repo.copies) != 1 || repo.copies[0] != "a.go" {
+		t.Fatalf("expected a.go to be copied, got %v", repo.copies)
+	}
+	if len(repo.inserts) != 1 || repo.inserts[0] != "b.go" {
+		t.Fatalf("expected only b.go to be reinserted, got %v", repo.inserts)
+	}
+	if embedder.embedCalls != 0 {
+		t.Fatalf("expected embedding reuse for b.go, got %d embed calls", embedder.embedCalls)
+	}
+	if hashes.inserted["a.go"] == "" || hashes.inserted["b.go"] == "" {
+		t.Fatalf("expected per-file hashes to be inserted, got %#v", hashes.inserted)
 	}
 }
