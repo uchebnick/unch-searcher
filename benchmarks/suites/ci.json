@@ -53,15 +53,15 @@
       ]
     },
     {
-      "id": "go-chi/chi",
-      "url": "https://github.com/go-chi/chi.git",
-      "commit": "a54874f0e2f12647a19e82ee70dfa8185014100c",
+      "id": "julienschmidt/httprouter",
+      "url": "https://github.com/julienschmidt/httprouter.git",
+      "commit": "484018016424d215c0b87c42f4c9b57d980fbd00",
       "language": "go",
       "queries": [
-        { "id": "chi-new-router-semantic", "text": "create a new router", "mode": "semantic", "expected_hits": ["chi.go:60"] },
-        { "id": "chi-url-param-semantic", "text": "get a URL parameter from a request", "mode": "semantic", "expected_hits": ["context.go:10"] },
-        { "id": "chi-route-subrouter-auto", "text": "create a subrouter mounted at a pattern", "mode": "auto", "expected_hits": ["mux.go:272"] },
-        { "id": "chi-mount-lexical", "text": "Mount", "mode": "lexical", "expected_hits": ["mux.go:289"] }
+        { "id": "httprouter-new-semantic", "text": "create a new router with redirect and options handling enabled", "mode": "semantic", "expected_hits": ["router.go:213"] },
+        { "id": "httprouter-handle-semantic", "text": "register a request handler for an http method and path", "mode": "semantic", "expected_hits": ["router.go:292"] },
+        { "id": "httprouter-lookup-auto", "text": "lookup a route manually by method and path", "mode": "auto", "expected_hits": ["router.go:394"] },
+        { "id": "httprouter-serve-http-lexical", "text": "ServeHTTP", "mode": "lexical", "expected_hits": ["router.go:463"] }
       ]
     },
     {
