@@ -118,6 +118,77 @@ func TestCollectJobsSkipsNoiseAndRespectsGitignore(t *testing.T) {
 	}
 }
 
+func TestCollectFileHashesSkipsNoiseAndRespectsGitignore(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored.go\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".semsearch"), 0o755); err != nil {
+		t.Fatalf("mkdir .semsearch: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+
+	files := map[string]string{
+		"keep.go":      "package demo\n\nfunc Keep() {}\n",
+		"ignored.go":   "package demo\n\nfunc Ignored() {}\n",
+		"README.md":    "# ignored readme\n",
+		"notes.txt":    "plain text note\n",
+		".semsearch/a": "ignored local state\n",
+	}
+	for rel, content := range files {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir parent for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	hashes, err := CollectFileHashes(root, filepath.Join(root, ".gitignore"), nil)
+	if err != nil {
+		t.Fatalf("CollectFileHashes() error: %v", err)
+	}
+
+	if _, ok := hashes["ignored.go"]; ok {
+		t.Fatalf("ignored.go should be skipped, got hashes=%#v", hashes)
+	}
+	if _, ok := hashes["README.md"]; ok {
+		t.Fatalf("README.md should be skipped, got hashes=%#v", hashes)
+	}
+	if _, ok := hashes[".semsearch/a"]; ok {
+		t.Fatalf(".semsearch entries should be skipped, got hashes=%#v", hashes)
+	}
+	if hashes["keep.go"] == "" {
+		t.Fatalf("keep.go hash missing: %#v", hashes)
+	}
+	if hashes["notes.txt"] == "" {
+		t.Fatalf("notes.txt hash missing: %#v", hashes)
+	}
+	if hashes[".gitignore"] == "" {
+		t.Fatalf(".gitignore hash missing: %#v", hashes)
+	}
+}
+
+func TestBuildScannerFingerprintStableAcrossExcludeOrder(t *testing.T) {
+	t.Parallel()
+
+	a := BuildScannerFingerprint("@search:", "@filectx:", []string{"dist", "node_modules"})
+	b := BuildScannerFingerprint("@search:", "@filectx:", []string{"node_modules", "dist"})
+	c := BuildScannerFingerprint("@search", "@filectx:", []string{"node_modules", "dist"})
+
+	if a != b {
+		t.Fatalf("fingerprints should match across exclude order: %q != %q", a, b)
+	}
+	if a == c {
+		t.Fatalf("fingerprints should differ when scanner inputs change: %q == %q", a, c)
+	}
+}
+
 func TestLooksLikeBinaryFile(t *testing.T) {
 	t.Parallel()
 

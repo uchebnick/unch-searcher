@@ -18,9 +18,7 @@ func TestStoreLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	defer func() {
-		_ = store.Close()
-	}()
+	defer store.Close()
 
 	const modelID = "embeddinggemma"
 
@@ -117,9 +115,7 @@ func TestActiveSnapshotIsolationAcrossModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	defer func() {
-		_ = store.Close()
-	}()
+	defer store.Close()
 
 	if err := store.AddEmbedding(ctx, "embeddinggemma", "hash-gemma", []float32{1, 0, 0}); err != nil {
 		t.Fatalf("AddEmbedding(gemma) error: %v", err)
@@ -173,9 +169,7 @@ func TestLogicalHashIgnoresSnapshotOnlyChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	defer func() {
-		_ = store.Close()
-	}()
+	defer store.Close()
 
 	modelID := "embeddinggemma"
 	vec := []float32{1, 0, 0}
@@ -236,9 +230,7 @@ func TestLogicalHashRejectsLegacySchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sql.Open() error: %v", err)
 	}
-	defer func() {
-		_ = db.Close()
-	}()
+	defer db.Close()
 
 	for _, stmt := range []string{
 		`CREATE TABLE comments (
@@ -266,5 +258,57 @@ func TestLogicalHashRejectsLegacySchema(t *testing.T) {
 	_, err = LogicalHash(ctx, dbPath)
 	if err == nil || !errors.Is(err, ErrIncompatibleSchema) {
 		t.Fatalf("LogicalHash() error = %v, want ErrIncompatibleSchema", err)
+	}
+}
+
+func TestCopyPathFromSnapshot(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "index.db")
+
+	store, err := Open(ctx, dbPath, 3)
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer store.Close()
+
+	modelID := "embeddinggemma"
+	if err := store.AddEmbedding(ctx, modelID, "hash-a", []float32{1, 0, 0}); err != nil {
+		t.Fatalf("AddEmbedding() error: %v", err)
+	}
+
+	srcSnapshot, err := store.BeginSnapshot(ctx, modelID)
+	if err != nil {
+		t.Fatalf("BeginSnapshot(src) error: %v", err)
+	}
+	if err := store.InsertSymbol(ctx, srcSnapshot, modelID, "a.go", indexing.IndexedSymbol{
+		Line:          10,
+		Kind:          "function",
+		Name:          "A",
+		QualifiedName: "A",
+	}, "hash-a"); err != nil {
+		t.Fatalf("InsertSymbol(src) error: %v", err)
+	}
+	if err := store.ActivateSnapshot(ctx, modelID, srcSnapshot); err != nil {
+		t.Fatalf("ActivateSnapshot(src) error: %v", err)
+	}
+
+	dstSnapshot, err := store.BeginSnapshot(ctx, modelID)
+	if err != nil {
+		t.Fatalf("BeginSnapshot(dst) error: %v", err)
+	}
+	copied, err := store.CopyPathFromSnapshot(ctx, modelID, srcSnapshot, dstSnapshot, "a.go")
+	if err != nil {
+		t.Fatalf("CopyPathFromSnapshot() error: %v", err)
+	}
+	if copied != 1 {
+		t.Fatalf("CopyPathFromSnapshot() copied = %d, want 1", copied)
+	}
+
+	listed, err := store.ListSymbolsBySnapshot(ctx, modelID, dstSnapshot)
+	if err != nil {
+		t.Fatalf("ListSymbolsBySnapshot(dst) error: %v", err)
+	}
+	if len(listed) != 1 || listed[0].Path != "a.go" || listed[0].QualifiedName != "A" {
+		t.Fatalf("ListSymbolsBySnapshot(dst) = %+v", listed)
 	}
 }

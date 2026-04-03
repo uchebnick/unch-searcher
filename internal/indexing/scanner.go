@@ -16,18 +16,76 @@ type FileScanner struct {
 	Root string
 }
 
+func (FileScanner) WalkFiles(root string, gitignorePath string, extraPatterns []string, visit func(path string, rel string, source []byte) error) error {
+	return walkSourceFiles(root, gitignorePath, extraPatterns, visit)
+}
+
+func (FileScanner) CollectJob(path string, rel string, source []byte, commentPrefix string, contextPrefix string) (FileJob, bool, error) {
+	symbols, err := extractSymbolsForSource(path, source, commentPrefix, contextPrefix)
+	if err != nil {
+		return FileJob{}, false, fmt.Errorf("extract symbols from %s: %w", path, err)
+	}
+	job := FileJob{
+		Path:       rel,
+		SourcePath: path,
+		Symbols:    symbols,
+	}
+	return job, len(symbols) > 0, nil
+}
+
 // CollectJobs walks the repository, applies ignore rules, extracts symbols from
 // source files, and returns only files that produced indexable output.
 func (FileScanner) CollectJobs(root string, gitignorePath string, extraPatterns []string, commentPrefix string, contextPrefix string) ([]FileJob, int, error) {
-	matcher, err := buildIgnoreMatcher(gitignorePath, extraPatterns)
-	if err != nil {
-		return nil, 0, fmt.Errorf("build ignore matcher: %w", err)
-	}
-
 	var jobs []FileJob
 	totalSymbols := 0
 
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+	err := walkSourceFiles(root, gitignorePath, extraPatterns, func(path string, rel string, source []byte) error {
+		job, ok, err := FileScanner{}.CollectJob(path, rel, source, commentPrefix, contextPrefix)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+
+		jobs = append(jobs, job)
+		totalSymbols += len(job.Symbols)
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return jobs, totalSymbols, nil
+}
+
+func extractSymbolsForSource(path string, source []byte, commentPrefix string, contextPrefix string) ([]IndexedSymbol, error) {
+	if symbols, ok := extractTreeSitterSymbols(path, source); ok {
+		return symbols, nil
+	}
+
+	return extractLegacySymbols(path, commentPrefix, contextPrefix)
+}
+
+func extractSymbolsForPath(path string, commentPrefix string, contextPrefix string) ([]IndexedSymbol, error) {
+	source, binary, err := readSourceFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if binary {
+		return nil, nil
+	}
+
+	return extractSymbolsForSource(path, source, commentPrefix, contextPrefix)
+}
+
+func walkSourceFiles(root string, gitignorePath string, extraPatterns []string, visit func(path string, rel string, source []byte) error) error {
+	matcher, err := buildIgnoreMatcher(gitignorePath, extraPatterns)
+	if err != nil {
+		return fmt.Errorf("build ignore matcher: %w", err)
+	}
+
+	return filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -60,43 +118,16 @@ func (FileScanner) CollectJobs(root string, gitignorePath string, extraPatterns 
 			return nil
 		}
 
-		symbols, err := extractSymbolsForPath(path, commentPrefix, contextPrefix)
+		source, binary, err := readSourceFile(path)
 		if err != nil {
-			return fmt.Errorf("extract symbols from %s: %w", path, err)
+			return err
 		}
-		if len(symbols) == 0 {
+		if binary {
 			return nil
 		}
 
-		jobs = append(jobs, FileJob{
-			Path:       rel,
-			SourcePath: path,
-			Symbols:    symbols,
-		})
-		totalSymbols += len(symbols)
-		return nil
+		return visit(path, rel, source)
 	})
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return jobs, totalSymbols, nil
-}
-
-func extractSymbolsForPath(path string, commentPrefix string, contextPrefix string) ([]IndexedSymbol, error) {
-	source, binary, err := readSourceFile(path)
-	if err != nil {
-		return nil, err
-	}
-	if binary {
-		return nil, nil
-	}
-
-	if symbols, ok := extractTreeSitterSymbols(path, source); ok {
-		return symbols, nil
-	}
-
-	return extractLegacySymbols(path, commentPrefix, contextPrefix)
 }
 
 func readSourceFile(path string) ([]byte, bool, error) {
