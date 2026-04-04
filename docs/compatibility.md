@@ -60,10 +60,10 @@ This document describes the current compatibility contract for `unch`.
 | Homebrew install | Supported | macOS-first polished install path |
 | `go install` | Supported | Canonical module path is `github.com/uchebnick/unch` |
 | `install.sh` | Supported | Uses release assets on macOS and Linux by default, with Go fallback for unsupported targets |
-| `install/install.ps1` | Supported | Uses release assets on Windows x86_64 by default, with Go fallback elsewhere |
+| `install/install.ps1` | Supported | Uses release assets on Windows by default, with Go fallback elsewhere |
 | Darwin release binaries | Supported | `arm64` and `x86_64` |
 | Linux release binaries | Supported | `arm64` and `x86_64` |
-| Windows release binaries | Limited | `x86_64` (`unch.exe`) |
+| Windows release binaries | Supported | `arm64` and `x86_64` (`unch.exe`) |
 | Remote indexing | Supported | GitHub Actions `searcher` workflow |
 
 ## Current Practical Rules

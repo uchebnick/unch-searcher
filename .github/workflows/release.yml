@@ -46,6 +46,13 @@ jobs:
             archive_type: zip
             msystem: UCRT64
             msys_pkg: mingw-w64-ucrt-x86_64-gcc
+          - runner: windows-11-arm
+            goos: windows
+            goarch: arm64
+            asset_name: unch_Windows_arm64.zip
+            archive_type: zip
+            msystem: CLANGARM64
+            msys_pkg: mingw-w64-clang-aarch64-gcc
     runs-on: ${{ matrix.runner }}
 
     steps:
