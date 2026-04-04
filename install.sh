@@ -70,17 +70,16 @@ detect_arch() {
   esac
 }
 
-detect_linux_distro_id() {
-  if [ ! -r /etc/os-release ]; then
-    printf '\n'
-    return
-  fi
-
-  awk -F= '/^ID=/{gsub(/"/, "", $2); print $2; exit}' /etc/os-release
+has_system_linux_loader() {
+  case "$(detect_arch)" in
+    x86_64) [ -e /lib64/ld-linux-x86-64.so.2 ] ;;
+    arm64) [ -e /lib/ld-linux-aarch64.so.1 ] ;;
+    *) return 1 ;;
+  esac
 }
 
-is_nixos() {
-  [ "$(detect_os)" = "Linux" ] && [ "$(detect_linux_distro_id)" = "nixos" ]
+needs_nix_loader_patch() {
+  [ "$(detect_os)" = "Linux" ] && has_cmd nix && ! has_system_linux_loader
 }
 
 patch_nixos_binary() {
@@ -108,8 +107,8 @@ install_unix_binary() {
 
   install -m 0755 "$source_path" "$destination_path"
 
-  if is_nixos; then
-    say "Detected NixOS; patching ${destination_path} for native execution"
+  if needs_nix_loader_patch; then
+    say "Detected a Linux environment without a system ELF loader; patching ${destination_path} via nix"
     patch_nixos_binary "$destination_path"
   fi
 }
