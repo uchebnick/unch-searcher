@@ -33,11 +33,15 @@ jobs:
             msystem: UCRT64
             msys_pkg: mingw-w64-ucrt-x86_64-gcc
             cc: gcc
+            msys_release: true
+            msys_cache: true
           - os: windows-11-arm
             label: windows-arm64
             msystem: CLANGARM64
             msys_pkg: mingw-w64-clang-aarch64-clang
             cc: clang
+            msys_release: false
+            msys_cache: false
 
     env:
       SEMSEARCH_YZMA_VERSION: b8581
@@ -63,7 +67,9 @@ jobs:
         with:
           msystem: ${{ matrix.msystem }}
           path-type: inherit
+          release: ${{ matrix.msys_release }}
           update: true
+          cache: ${{ matrix.msys_cache }}
           install: ${{ matrix.msys_pkg }}
 
       - name: Restore benchmark cache
@@ -178,11 +184,15 @@ jobs:
             msystem: UCRT64
             msys_pkg: mingw-w64-ucrt-x86_64-gcc
             cc: gcc
+            msys_release: true
+            msys_cache: true
           - os: windows-11-arm
             label: windows-arm64
             msystem: CLANGARM64
             msys_pkg: mingw-w64-clang-aarch64-clang
             cc: clang
+            msys_release: false
+            msys_cache: false
 
     steps:
       - name: Checkout
@@ -199,7 +209,9 @@ jobs:
         with:
           msystem: ${{ matrix.msystem }}
           path-type: inherit
+          release: ${{ matrix.msys_release }}
           update: true
+          cache: ${{ matrix.msys_cache }}
           install: ${{ matrix.msys_pkg }}
 
       - name: Build all packages
@@ -251,12 +263,16 @@ jobs:
             msystem: UCRT64
             msys_pkg: mingw-w64-ucrt-x86_64-gcc
             cc: gcc
+            msys_release: true
+            msys_cache: true
           - os: windows-11-arm
             label: windows-arm64
             asset_name: unch_Windows_arm64.zip
             msystem: CLANGARM64
             msys_pkg: mingw-w64-clang-aarch64-clang
             cc: clang
+            msys_release: false
+            msys_cache: false
 
     steps:
       - name: Checkout
@@ -273,7 +289,9 @@ jobs:
         with:
           msystem: ${{ matrix.msystem }}
           path-type: inherit
+          release: ${{ matrix.msys_release }}
           update: true
+          cache: ${{ matrix.msys_cache }}
           install: ${{ matrix.msys_pkg }}
 
       - name: Build local Unix release asset
