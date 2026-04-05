@@ -80,11 +80,11 @@ func runRemoteSync(ctx context.Context, program string, args []string) error {
 	if err != nil {
 		if *allowMissing {
 			if errors.Is(err, semsearch.ErrRemoteIndexNotPublished) {
-				_, _ = fmt.Fprintln(os.Stdout, "Remote index is not published yet; run the searcher GitHub Actions workflow once to publish it")
+				_, _ = fmt.Fprintln(os.Stdout, "Remote index is not published yet; run the remote index workflow once to publish it")
 				return nil
 			}
 			if errors.Is(err, semsearch.ErrRemoteIndexIncompatible) {
-				_, _ = fmt.Fprintln(os.Stdout, "Remote index uses an older schema; continuing without restore so the searcher workflow can rebuild and republish it")
+				_, _ = fmt.Fprintln(os.Stdout, "Remote index uses an older schema; continuing without restore so the remote index workflow can rebuild and republish it")
 				return nil
 			}
 		}
@@ -118,7 +118,7 @@ func runRemoteDownload(ctx context.Context, program string, args []string) error
 				"Download a published search artifact for a specific commit without binding the repository to remote sync.",
 				[]string{
 					cliName(program) + " remote download --commit abc123 https://github.com/uchebnick/unch",
-					cliName(program) + " remote download --commit abc123 https://github.com/uchebnick/unch/actions/workflows/searcher.yml",
+					cliName(program) + " remote download --commit abc123 https://github.com/uchebnick/unch/actions/workflows/unch-index.yml",
 				},
 				[]string{
 					"The downloaded manifest is activated as local-only state, so future searches do not auto-sync to latest remote by accident.",

@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -26,13 +27,13 @@ const (
 	defaultGitHubContentBaseURL  = "https://raw.githubusercontent.com"
 	gitHubPagesBranch            = "gh-pages"
 	gitHubPagesSemsearchDir      = "semsearch"
-	defaultCIWorkflowFile        = "searcher.yml"
+	defaultCIWorkflowFile        = "unch-index.yml"
 	searchIndexArtifactName      = "semsearch-index"
 )
 
 var (
-	ErrRemoteIndexNotPublished = errors.New("remote index is not published yet; run the searcher GitHub Actions workflow once to publish it")
-	ErrRemoteIndexIncompatible = errors.New("remote index uses an incompatible schema; rerun the searcher GitHub Actions workflow to publish a compatible index")
+	ErrRemoteIndexNotPublished = errors.New("remote index is not published yet; run the remote index workflow once to publish it")
+	ErrRemoteIndexIncompatible = errors.New("remote index uses an incompatible schema; rerun the remote index workflow to publish a compatible index")
 	gitHubAPIBaseURL           = defaultGitHubAPIBaseURL
 	gitHubContentBaseURL       = defaultGitHubContentBaseURL
 	remoteManifestHTTPClient   = &http.Client{Timeout: 20 * time.Second}
@@ -178,6 +179,11 @@ func (w GitHubWorkflowRef) PublishedIndexURL() (string, error) {
 	return joinURLPath(gitHubContentBaseURL, w.Owner, w.Repo, gitHubPagesBranch, gitHubPagesSemsearchDir, "index.db")
 }
 
+// PublishedFileHashesURL returns the raw gh-pages file-hash cache URL for this workflow.
+func (w GitHubWorkflowRef) PublishedFileHashesURL() (string, error) {
+	return joinURLPath(gitHubContentBaseURL, w.Owner, w.Repo, gitHubPagesBranch, gitHubPagesSemsearchDir, "filehashes.db")
+}
+
 // SyncRemoteIndex refreshes the local index from the published remote CI artifacts when needed.
 func SyncRemoteIndex(ctx context.Context, localDir string) (RemoteSyncResult, error) {
 	manifest, err := ReadManifest(localDir)
@@ -205,6 +211,7 @@ func SyncRemoteIndex(ctx context.Context, localDir string) (RemoteSyncResult, er
 	remoteManifest = normalizePublishedManifest(remoteManifest, manifest.Remote.CIURL)
 
 	dbPath := filepath.Join(localDir, "index.db")
+	fileHashesPath := filepath.Join(localDir, "filehashes.db")
 	dbExists := fileExists(dbPath)
 	needsDownload := !dbExists ||
 		manifest.Version != remoteManifest.Version ||
@@ -215,6 +222,9 @@ func SyncRemoteIndex(ctx context.Context, localDir string) (RemoteSyncResult, er
 			if err := WriteManifest(localDir, remoteManifest); err != nil {
 				return RemoteSyncResult{}, fmt.Errorf("write refreshed manifest: %w", err)
 			}
+		}
+		if !fileExists(fileHashesPath) {
+			_, _ = downloadPublishedFileHashes(ctx, workflow, fileHashesPath)
 		}
 		return RemoteSyncResult{
 			Checked:  true,
@@ -229,7 +239,7 @@ func SyncRemoteIndex(ctx context.Context, localDir string) (RemoteSyncResult, er
 				return RemoteSyncResult{
 					Checked:  true,
 					Manifest: manifest,
-					Note:     "Published remote index uses an older schema; using the local cache until the searcher workflow republishes it",
+					Note:     "Published remote index uses an older schema; using the local cache until the remote index workflow republishes it",
 				}, nil
 			}
 			if err := WriteManifest(localDir, remoteManifest); err != nil {
@@ -237,6 +247,12 @@ func SyncRemoteIndex(ctx context.Context, localDir string) (RemoteSyncResult, er
 			}
 		}
 		return RemoteSyncResult{}, fmt.Errorf("download remote index: %w", err)
+	}
+	downloadedFileHashes, err := downloadPublishedFileHashes(ctx, workflow, fileHashesPath)
+	if err != nil || !downloadedFileHashes {
+		if removeErr := removeIfExists(fileHashesPath); removeErr != nil {
+			return RemoteSyncResult{}, fmt.Errorf("reset remote file hash cache: %w", removeErr)
+		}
 	}
 	if err := WriteManifest(localDir, remoteManifest); err != nil {
 		return RemoteSyncResult{}, fmt.Errorf("write downloaded manifest: %w", err)
@@ -276,7 +292,7 @@ func DownloadIndexArtifactForCommit(ctx context.Context, localDir string, ciTarg
 		return ArtifactDownloadResult{}, err
 	}
 
-	downloadedManifest, indexBytes, err := extractIndexArtifactPayload(artifactZip)
+	downloadedManifest, indexBytes, fileHashesBytes, err := extractIndexArtifactPayload(artifactZip)
 	if err != nil {
 		return ArtifactDownloadResult{}, err
 	}
@@ -285,6 +301,14 @@ func DownloadIndexArtifactForCommit(ctx context.Context, localDir string, ciTarg
 	dbPath := filepath.Join(localDir, "index.db")
 	if err := writeDownloadedIndex(dbPath, indexBytes, downloadedManifest.IndexingHash); err != nil {
 		return ArtifactDownloadResult{}, fmt.Errorf("activate artifact index: %w", err)
+	}
+	fileHashesPath := filepath.Join(localDir, "filehashes.db")
+	if len(fileHashesBytes) > 0 {
+		if err := writeDownloadedFile(fileHashesPath, fileHashesBytes); err != nil {
+			return ArtifactDownloadResult{}, fmt.Errorf("activate artifact file hash cache: %w", err)
+		}
+	} else if err := removeIfExists(fileHashesPath); err != nil {
+		return ArtifactDownloadResult{}, fmt.Errorf("reset artifact file hash cache: %w", err)
 	}
 	if err := WriteManifest(localDir, localManifest); err != nil {
 		return ArtifactDownloadResult{}, fmt.Errorf("write downloaded manifest: %w", err)
@@ -362,6 +386,25 @@ func downloadPublishedIndex(ctx context.Context, workflow GitHubWorkflowRef, des
 	return activateDownloadedIndex(ctx, tmpPath, destPath, expectedHash)
 }
 
+func downloadPublishedFileHashes(ctx context.Context, workflow GitHubWorkflowRef, destPath string) (bool, error) {
+	fileHashesURL, err := workflow.PublishedFileHashesURL()
+	if err != nil {
+		return false, err
+	}
+
+	data, err := fetchRemoteBytes(ctx, fileHashesURL)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := writeDownloadedFile(destPath, data); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func writeDownloadedIndex(destPath string, data []byte, expectedHash string) error {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Dir(destPath), err)
@@ -373,6 +416,22 @@ func writeDownloadedIndex(destPath string, data []byte, expectedHash string) err
 	}
 
 	return activateDownloadedIndex(context.Background(), tmpPath, destPath, expectedHash)
+}
+
+func writeDownloadedFile(destPath string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(destPath), err)
+	}
+
+	tmpPath := destPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", tmpPath, err)
+	}
+	if err := replaceFile(tmpPath, destPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("activate %s: %w", destPath, err)
+	}
+	return nil
 }
 
 func activateDownloadedIndex(ctx context.Context, tmpPath string, destPath string, expectedHash string) error {
@@ -391,9 +450,16 @@ func activateDownloadedIndex(ctx context.Context, tmpPath string, destPath strin
 		}
 	}
 
-	if err := os.Rename(tmpPath, destPath); err != nil {
+	if err := replaceFile(tmpPath, destPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("activate %s: %w", destPath, err)
+	}
+	return nil
+}
+
+func removeIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }
@@ -401,6 +467,8 @@ func activateDownloadedIndex(ctx context.Context, tmpPath string, destPath strin
 type gitHubWorkflowRunsResponse struct {
 	WorkflowRuns []gitHubWorkflowRun `json:"workflow_runs"`
 }
+
+const gitHubAPIPerPage = 100
 
 type gitHubWorkflowRun struct {
 	ID         int64  `json:"id"`
@@ -446,24 +514,32 @@ func findSearchArtifactForCommit(ctx context.Context, workflow GitHubWorkflowRef
 }
 
 func listWorkflowRuns(ctx context.Context, workflow GitHubWorkflowRef, commitSHA string) ([]gitHubWorkflowRun, error) {
-	runsURL, err := workflowRunsAPIURL(workflow, commitSHA)
-	if err != nil {
-		return nil, err
-	}
-
-	data, err := fetchRemoteBytes(ctx, runsURL)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w for commit %s", ErrRemoteIndexNotPublished, shortenCommitSHA(commitSHA))
+	allRuns := make([]gitHubWorkflowRun, 0, gitHubAPIPerPage)
+	for page := 1; ; page++ {
+		runsURL, err := workflowRunsAPIURL(workflow, commitSHA, page)
+		if err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("list workflow runs: %w", err)
+
+		data, err := fetchRemoteBytes(ctx, runsURL)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("%w for commit %s", ErrRemoteIndexNotPublished, shortenCommitSHA(commitSHA))
+			}
+			return nil, fmt.Errorf("list workflow runs: %w", err)
+		}
+
+		var payload gitHubWorkflowRunsResponse
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return nil, fmt.Errorf("decode workflow runs: %w", err)
+		}
+		allRuns = append(allRuns, payload.WorkflowRuns...)
+		if len(payload.WorkflowRuns) < gitHubAPIPerPage {
+			break
+		}
 	}
 
-	var payload gitHubWorkflowRunsResponse
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, fmt.Errorf("decode workflow runs: %w", err)
-	}
-	return payload.WorkflowRuns, nil
+	return allRuns, nil
 }
 
 func findRunArtifact(ctx context.Context, workflow GitHubWorkflowRef, runID int64) (int64, bool, error) {
@@ -509,44 +585,47 @@ func downloadArtifactArchive(ctx context.Context, workflow GitHubWorkflowRef, ar
 	return data, nil
 }
 
-func extractIndexArtifactPayload(archive []byte) (Manifest, []byte, error) {
+func extractIndexArtifactPayload(archive []byte) (Manifest, []byte, []byte, error) {
 	reader, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
 	if err != nil {
-		return Manifest{}, nil, fmt.Errorf("open artifact archive: %w", err)
+		return Manifest{}, nil, nil, fmt.Errorf("open artifact archive: %w", err)
 	}
 
 	var manifestBytes []byte
 	var indexBytes []byte
+	var fileHashesBytes []byte
 	for _, file := range reader.File {
 		switch path.Base(file.Name) {
 		case "manifest.json":
 			manifestBytes, err = readZipFile(file)
 		case "index.db":
 			indexBytes, err = readZipFile(file)
+		case "filehashes.db":
+			fileHashesBytes, err = readZipFile(file)
 		default:
 			continue
 		}
 		if err != nil {
-			return Manifest{}, nil, err
+			return Manifest{}, nil, nil, err
 		}
 	}
 
 	if len(manifestBytes) == 0 {
-		return Manifest{}, nil, fmt.Errorf("artifact archive does not include manifest.json")
+		return Manifest{}, nil, nil, fmt.Errorf("artifact archive does not include manifest.json")
 	}
 	if len(indexBytes) == 0 {
-		return Manifest{}, nil, fmt.Errorf("artifact archive does not include index.db")
+		return Manifest{}, nil, nil, fmt.Errorf("artifact archive does not include index.db")
 	}
 
 	var manifest Manifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return Manifest{}, nil, fmt.Errorf("decode artifact manifest: %w", err)
+		return Manifest{}, nil, nil, fmt.Errorf("decode artifact manifest: %w", err)
 	}
 	manifest = manifest.Normalize()
 	if err := manifest.Validate(); err != nil {
-		return Manifest{}, nil, fmt.Errorf("validate artifact manifest: %w", err)
+		return Manifest{}, nil, nil, fmt.Errorf("validate artifact manifest: %w", err)
 	}
-	return manifest, indexBytes, nil
+	return manifest, indexBytes, fileHashesBytes, nil
 }
 
 func readZipFile(file *zip.File) ([]byte, error) {
@@ -610,7 +689,7 @@ func handleRemoteManifestFetchError(fetchErr error, localDir string, manifest Ma
 			return RemoteSyncResult{
 				Checked:  true,
 				Manifest: manifest,
-				Note:     "Remote index is not published yet; using the local cache until the searcher workflow publishes it",
+				Note:     "Remote index is not published yet; using the local cache until the remote index workflow publishes it",
 			}, nil
 		}
 		return RemoteSyncResult{}, ErrRemoteIndexNotPublished
@@ -703,7 +782,7 @@ func joinURLPath(base string, elems ...string) (string, error) {
 	return parsed.String(), nil
 }
 
-func workflowRunsAPIURL(workflow GitHubWorkflowRef, commitSHA string) (string, error) {
+func workflowRunsAPIURL(workflow GitHubWorkflowRef, commitSHA string, page int) (string, error) {
 	base, err := joinURLPath(gitHubAPIBaseURL, "repos", workflow.Owner, workflow.Repo, "actions", "workflows", workflow.WorkflowFile, "runs")
 	if err != nil {
 		return "", err
@@ -714,9 +793,28 @@ func workflowRunsAPIURL(workflow GitHubWorkflowRef, commitSHA string) (string, e
 	}
 	query := parsed.Query()
 	query.Set("head_sha", strings.TrimSpace(commitSHA))
-	query.Set("per_page", "100")
+	query.Set("per_page", fmt.Sprintf("%d", gitHubAPIPerPage))
+	query.Set("page", fmt.Sprintf("%d", page))
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
+}
+
+func replaceFile(srcPath string, destPath string) error {
+	if err := os.Rename(srcPath, destPath); err == nil {
+		return nil
+	}
+
+	if runtime.GOOS != "windows" {
+		return os.Rename(srcPath, destPath)
+	}
+
+	if removeErr := os.Remove(destPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return fmt.Errorf("remove existing destination: %w", removeErr)
+	}
+	if err := os.Rename(srcPath, destPath); err != nil {
+		return err
+	}
+	return nil
 }
 
 func runArtifactsAPIURL(workflow GitHubWorkflowRef, runID int64) (string, error) {

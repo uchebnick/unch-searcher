@@ -7,13 +7,16 @@ import (
 )
 
 const (
-	// DefaultCIWorkflowRepository is the upstream repository that hosts the reusable searcher workflow.
+	// DefaultCIWorkflowRepository is the upstream repository that hosts the reusable remote-index workflow.
 	DefaultCIWorkflowRepository = "uchebnick/unch"
 	// DefaultCIWorkflowRef pins generated workflows to the matching reusable workflow release.
-	DefaultCIWorkflowRef = "v0.2.2"
+	DefaultCIWorkflowRef          = "v0.3.6"
+	defaultCIWorkflowPath         = ".github/workflows/unch-index.yml"
+	legacyCIWorkflowPath          = ".github/workflows/searcher.yml"
+	defaultReusableCIWorkflowPath = ".github/workflows/unch-index-reusable.yml"
 )
 
-const defaultCIWorkflowTemplate = `name: searcher
+const defaultCIWorkflowTemplate = `name: unch-index
 
 on:
   push:
@@ -41,8 +44,8 @@ permissions:
   contents: write
 
 jobs:
-  searcher:
-    uses: %s/.github/workflows/searcher-reusable.yml@%s
+  index:
+    uses: %s/.github/workflows/unch-index-reusable.yml@%s
     with:
       force_rebuild: ${{ github.event.inputs.force_rebuild == 'true' }}
       skip_remote_restore: ${{ github.event.inputs.skip_remote_restore == 'true' }}
@@ -61,8 +64,8 @@ var DefaultCIWorkflow = fmt.Sprintf(
 	DefaultCIWorkflowRef,
 )
 
-// LocalCIWorkflow keeps this repository's checked-in searcher wrapper aligned with the generated shape.
-const LocalCIWorkflow = `name: searcher
+// LocalCIWorkflow keeps this repository's checked-in remote-index wrapper aligned with the generated shape.
+const LocalCIWorkflow = `name: unch-index
 
 on:
   push:
@@ -90,8 +93,8 @@ permissions:
   contents: write
 
 jobs:
-  searcher:
-    uses: ./.github/workflows/searcher-reusable.yml
+  index:
+    uses: ./.github/workflows/unch-index-reusable.yml
     with:
       force_rebuild: ${{ github.event.inputs.force_rebuild == 'true' }}
       skip_remote_restore: ${{ github.event.inputs.skip_remote_restore == 'true' }}
@@ -101,8 +104,8 @@ jobs:
     secrets: inherit
 `
 
-// ReusableCIWorkflow is the central searcher implementation that runs inside the caller repository.
-const ReusableCIWorkflow = `name: searcher-reusable
+// ReusableCIWorkflow is the central remote-index implementation that runs inside the caller repository.
+const ReusableCIWorkflow = `name: unch-index-reusable
 
 on:
   workflow_call:
@@ -130,7 +133,7 @@ on:
       unch_ref:
         description: Git ref from the unch repository used to build the CLI
         required: false
-        default: v0.2.2
+        default: v0.3.6
         type: string
 
 permissions:
@@ -165,7 +168,7 @@ jobs:
           rm -rf "$tool_dir" "$bin_dir" "$probe_dir"
           mkdir -p "$bin_dir"
           if [ "${UNCH_REPOSITORY}" = "${GITHUB_REPOSITORY}" ] && [ "${UNCH_REF}" = "${GITHUB_SHA}" ]; then
-            go build -trimpath -o "$bin_dir/unch" .
+            go build -trimpath -o "$bin_dir/unch" ./cmd/unch
           else
             mkdir -p "$tool_dir"
             (
@@ -174,7 +177,7 @@ jobs:
               git remote add origin "https://github.com/${UNCH_REPOSITORY}.git"
               git fetch --depth 1 origin "${UNCH_REF}"
               git checkout --detach FETCH_HEAD
-              go build -trimpath -o "$bin_dir/unch" .
+              go build -trimpath -o "$bin_dir/unch" ./cmd/unch
             )
           fi
           export PATH="$bin_dir:$PATH"
@@ -192,7 +195,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ci_url="https://github.com/${GITHUB_REPOSITORY}/actions/workflows/searcher.yml"
+          ci_url="https://github.com/${GITHUB_REPOSITORY}/actions/workflows/unch-index.yml"
           mkdir -p .semsearch/logs
           echo "::group::Bind CI manifest"
           unch bind ci --root . "$ci_url"
@@ -228,10 +231,10 @@ jobs:
           unch init --root .
           echo "::endgroup::"
           echo "::group::unch index"
-          unch index --root . 2>&1 | tee .semsearch/logs/searcher-index.log
+          unch index --root . 2>&1 | tee .semsearch/logs/unch-index.log
           echo "::endgroup::"
           echo "::group::Bind remote manifest"
-          ci_url="https://github.com/${GITHUB_REPOSITORY}/actions/workflows/searcher.yml"
+          ci_url="https://github.com/${GITHUB_REPOSITORY}/actions/workflows/unch-index.yml"
           unch bind ci --root . "$ci_url"
           cat .semsearch/manifest.json
           echo "::endgroup::"
@@ -266,12 +269,12 @@ jobs:
               echo "{}"
             fi
             echo '</pre>'
-            if [ -f .semsearch/logs/searcher-index.log ]; then
+            if [ -f .semsearch/logs/unch-index.log ]; then
               echo
               echo "### Index log tail"
               echo
               echo '<pre>'
-              tail -n 80 .semsearch/logs/searcher-index.log
+              tail -n 80 .semsearch/logs/unch-index.log
               echo '</pre>'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
@@ -283,6 +286,7 @@ jobs:
           name: semsearch-index
           path: |
             .semsearch/index.db
+            .semsearch/filehashes.db
             .semsearch/manifest.json
             .semsearch/logs/
           if-no-files-found: warn
@@ -322,6 +326,11 @@ jobs:
           fi
           mkdir -p "$publish_dir/semsearch"
           cp "$artifact_dir/index.db" "$publish_dir/semsearch/index.db"
+          if [ -f "$artifact_dir/filehashes.db" ]; then
+            cp "$artifact_dir/filehashes.db" "$publish_dir/semsearch/filehashes.db"
+          else
+            rm -f "$publish_dir/semsearch/filehashes.db"
+          fi
           cp "$artifact_dir/manifest.json" "$publish_dir/semsearch/manifest.json"
           echo "::group::Publish payload"
           find "$publish_dir/semsearch" -maxdepth 1 -type f | sort
@@ -331,6 +340,9 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add semsearch/index.db semsearch/manifest.json
+            if [ -f semsearch/filehashes.db ]; then
+              git add semsearch/filehashes.db
+            fi
             if git diff --cached --quiet; then
               echo "No gh-pages changes to publish."
             else
@@ -342,7 +354,11 @@ jobs:
 
 // CIWorkflowPath returns the generated workflow location under .github/workflows.
 func CIWorkflowPath(root string) string {
-	return filepath.Join(root, ".github", "workflows", "searcher.yml")
+	return filepath.Join(root, defaultCIWorkflowPath)
+}
+
+func legacyCIWorkflowAbsPath(root string) string {
+	return filepath.Join(root, legacyCIWorkflowPath)
 }
 
 // EnsureCIWorkflow writes the default search-index workflow without overwriting an existing file.
@@ -352,6 +368,13 @@ func EnsureCIWorkflow(root string) (string, bool, error) {
 		return path, false, nil
 	} else if !os.IsNotExist(err) {
 		return "", false, fmt.Errorf("stat %s: %w", path, err)
+	}
+
+	legacyPath := legacyCIWorkflowAbsPath(root)
+	if _, err := os.Stat(legacyPath); err == nil {
+		return legacyPath, false, nil
+	} else if !os.IsNotExist(err) {
+		return "", false, fmt.Errorf("stat %s: %w", legacyPath, err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -172,8 +172,8 @@ func TestRunDispatchesCreateCommand(t *testing.T) {
 	if !strings.Contains(output, "Created ") {
 		t.Fatalf("Run(create ci) output = %q, want Created", output)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".github", "workflows", "searcher.yml")); err != nil {
-		t.Fatalf("expected searcher workflow to be created: %v", err)
+	if _, err := os.Stat(filepath.Join(root, ".github", "workflows", "unch-index.yml")); err != nil {
+		t.Fatalf("expected unch-index workflow to be created: %v", err)
 	}
 }
 
@@ -208,7 +208,7 @@ func TestRunDispatchesBindCommand(t *testing.T) {
 	chdirForTest(t, root)
 
 	output := captureStdout(t, func() {
-		if err := Run("unch", []string{"bind", "ci", "https://github.com/acme/widgets/actions/workflows/searcher.yml"}); err != nil {
+		if err := Run("unch", []string{"bind", "ci", "https://github.com/acme/widgets/actions/workflows/unch-index.yml"}); err != nil {
 			t.Fatalf("Run(bind ci) error: %v", err)
 		}
 	})
