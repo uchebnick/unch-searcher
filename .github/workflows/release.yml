@@ -196,11 +196,36 @@ jobs:
             echo "Telegram secrets are not set; skipping notification"
             exit 0
           fi
-          curl --fail --silent --show-error \
-            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+          telegram_api="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
+          response_file="$(mktemp)"
+          status="$(curl --silent --show-error \
+            --output "${response_file}" \
+            --write-out "%{http_code}" \
+            -X POST "${telegram_api}/getChat" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}")"
+          if [ "${status}" != "200" ]; then
+            cat "${response_file}" >&2
+            rm -f "${response_file}"
+            echo "Telegram chat lookup failed for the configured chat target" >&2
+            exit 1
+          fi
+          rm -f "${response_file}"
+
+          response_file="$(mktemp)"
+          status="$(curl --silent --show-error \
+            --output "${response_file}" \
+            --write-out "%{http_code}" \
+            -X POST "${telegram_api}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "text@dist/release-announcement.txt" \
-            --data-urlencode "disable_web_page_preview=true"
+            --data-urlencode "disable_web_page_preview=true")"
+          if [ "${status}" != "200" ]; then
+            cat "${response_file}" >&2
+            rm -f "${response_file}"
+            exit 1
+          fi
+          cat "${response_file}"
+          rm -f "${response_file}"
 
   publish-homebrew:
     name: publish-homebrew
