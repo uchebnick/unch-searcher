@@ -160,6 +160,45 @@ jobs:
             dist/*.zip
             dist/checksums.txt
 
+  notify-release:
+    name: notify-release
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Render release announcement
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python3 scripts/render_release_announcement.py \
+            --tag "${GITHUB_REF_NAME}" \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            --notes-file ".github/releases/${GITHUB_REF_NAME}.md" \
+            > dist/release-announcement.txt
+
+      - name: Upload release announcement
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-announcement
+          path: dist/release-announcement.txt
+          if-no-files-found: error
+
+      - name: Send Telegram release notification
+        if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@dist/release-announcement.txt" \
+            --data-urlencode "disable_web_page_preview=true"
+
   publish-homebrew:
     name: publish-homebrew
     needs: release
