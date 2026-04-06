@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -91,6 +93,44 @@ func TestResolveYzmaLibPath(t *testing.T) {
 	}
 	if got != filepath.Clean(fallback) || !strings.Contains(note, "using YZMA_LIB=") {
 		t.Fatalf("ResolveYzmaLibPath(fallback) = (%q, %q)", got, note)
+	}
+}
+
+func TestResolveOrInstallYzmaLibPathDownloadsManagedRuntime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, ".tar.gz"):
+			w.Header().Set("Content-Type", "application/gzip")
+			_, _ = w.Write(tarGzBytes(t, yzmaArchiveEntries()...))
+		case strings.HasSuffix(r.URL.Path, ".zip"):
+			archivePath := filepath.Join(t.TempDir(), "runtime.zip")
+			writeZIP(t, archivePath, yzmaZipEntries()...)
+			data, err := os.ReadFile(archivePath)
+			if err != nil {
+				t.Fatalf("ReadFile(zip archive) error = %v", err)
+			}
+			w.Header().Set("Content-Type", "application/zip")
+			_, _ = w.Write(data)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	rewriteDefaultTransportToServer(t, server)
+	t.Setenv("SEMSEARCH_YZMA_VERSION", "b1234")
+	t.Setenv("SEMSEARCH_YZMA_PROCESSOR", processorCPU)
+
+	localDir := t.TempDir()
+	got, note, err := (YzmaResolver{}).ResolveOrInstallYzmaLibPath(context.Background(), "", localDir, nil)
+	if err != nil {
+		t.Fatalf("ResolveOrInstallYzmaLibPath() error = %v", err)
+	}
+	if !strings.Contains(note, "downloaded yzma libs to") {
+		t.Fatalf("ResolveOrInstallYzmaLibPath() note = %q", note)
+	}
+	if resolved, ok := validateYzmaLibDir(got); !ok || resolved != got {
+		t.Fatalf("ResolveOrInstallYzmaLibPath() returned invalid lib dir %q", got)
 	}
 }
 
@@ -216,4 +256,29 @@ func TestDefaultYzmaProcessorUsesPinnedProcessor(t *testing.T) {
 	if got := defaultYzmaProcessor(); got != "cpu" {
 		t.Fatalf("defaultYzmaProcessor() = %q, want %q", got, "cpu")
 	}
+}
+
+func yzmaArchiveEntries() []tarEntry {
+	entries := make([]tarEntry, 0, len(requiredYzmaLibFiles()))
+	for _, name := range requiredYzmaLibFiles() {
+		entries = append(entries, tarEntry{
+			name: "bundle/" + name,
+			body: []byte("stub"),
+			typ:  0,
+			mode: 0o755,
+		})
+	}
+	return entries
+}
+
+func yzmaZipEntries() []zipEntry {
+	entries := make([]zipEntry, 0, len(requiredYzmaLibFiles()))
+	for _, name := range requiredYzmaLibFiles() {
+		entries = append(entries, zipEntry{
+			name: "bundle/" + name,
+			body: []byte("stub"),
+			mode: 0o755,
+		})
+	}
+	return entries
 }

@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -136,6 +139,65 @@ func TestResolveOrInstallModelPathUsesExistingFilesAndNestedGGUF(t *testing.T) {
 
 	if _, _, err := cache.ResolveOrInstallModelPath(context.Background(), filepath.Join(dir, "missing.gguf"), modelPath, false, nil); err == nil {
 		t.Fatalf("expected error for missing explicit model path")
+	}
+}
+
+func TestResolveOrInstallModelPathAutoDownloadsKnownModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "GGUFpayload")
+	}))
+	defer server.Close()
+
+	t.Setenv("SEMSEARCH_MODEL_URL", server.URL+"/embeddinggemma.gguf")
+
+	cache := ModelCache{}
+	defaultPath := DefaultModelPath(t.TempDir())
+
+	got, note, err := cache.ResolveOrInstallModelPath(context.Background(), "", defaultPath, true, nil)
+	if err != nil {
+		t.Fatalf("ResolveOrInstallModelPath(auto-download) error = %v", err)
+	}
+	if got != defaultPath {
+		t.Fatalf("ResolveOrInstallModelPath(auto-download) path = %q, want %q", got, defaultPath)
+	}
+	if !strings.Contains(note, "downloaded embeddinggemma-300m model") {
+		t.Fatalf("ResolveOrInstallModelPath(auto-download) note = %q", note)
+	}
+
+	data, err := os.ReadFile(defaultPath)
+	if err != nil {
+		t.Fatalf("ReadFile(downloaded model) error = %v", err)
+	}
+	if got := string(data); got != "GGUFpayload" {
+		t.Fatalf("downloaded model contents = %q, want %q", got, "GGUFpayload")
+	}
+}
+
+func TestRepairInstalledModelRepairsNestedGGUF(t *testing.T) {
+	destPath := filepath.Join(t.TempDir(), "embeddinggemma-300m.gguf")
+	if err := os.MkdirAll(destPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(model dir) error = %v", err)
+	}
+
+	nested := filepath.Join(destPath, "nested.gguf")
+	if err := os.WriteFile(nested, []byte("GGUFpayload"), 0o644); err != nil {
+		t.Fatalf("WriteFile(nested model) error = %v", err)
+	}
+
+	note, err := repairInstalledModel(destPath, nil)
+	if err != nil {
+		t.Fatalf("repairInstalledModel() error = %v", err)
+	}
+	if !strings.Contains(note, "repaired cached model") {
+		t.Fatalf("repairInstalledModel() note = %q", note)
+	}
+
+	info, err := os.Stat(destPath)
+	if err != nil {
+		t.Fatalf("Stat(repaired path) error = %v", err)
+	}
+	if info.IsDir() {
+		t.Fatalf("repairInstalledModel() left %s as a directory", destPath)
 	}
 }
 
