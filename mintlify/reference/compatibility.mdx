@@ -46,15 +46,15 @@ description: Support matrix, upgrade rules, and versioning contract for unch.
 | Other languages | Limited | Legacy prefix fallback only |
 | Search modes | Supported | `auto`, `semantic`, `lexical` |
 | Homebrew install | Supported | macOS-first polished install path |
-| `go install` | Supported | CLI package path is `github.com/uchebnick/unch/cmd/unch` |
-| `install.sh` | Supported | Uses release assets on macOS and Linux by default, with Go fallback for unsupported targets |
-| `install/install.ps1` | Supported | Uses release assets on Windows by default, with Go fallback elsewhere |
+| `go install` | Supported | CLI package path is `github.com/uchebnick/unch/cmd/unch`; requires a cgo-capable Go toolchain |
+| `install.sh` | Supported | Uses release assets on macOS and Linux by default, verifies downloads against published checksums, and falls back to `go install` only when no matching archive is available |
+| `install/install.ps1` | Supported | Uses release assets on Windows by default, verifies downloads against published checksums, and falls back to `go install` only when no matching archive is available |
 | Darwin release binaries | Supported | `arm64` and `x86_64` |
 | Linux release binaries | Supported | `arm64` and `x86_64` |
 | Windows release binaries | Supported | `arm64` and `x86_64` |
 | Remote indexing | Supported | GitHub Actions remote index workflow (`unch-index.yml`) |
 
-Published release binaries and CI builds on macOS, Linux, and Windows arm64/x86_64 use the full cgo-backed Tree-sitter and SQLite stack. Manual Windows builds without cgo remain a fallback path and should not be treated as identical to the published binaries.
+Published release binaries and CI builds on macOS, Linux, and Windows arm64/x86_64 use the full cgo-backed Tree-sitter and SQLite stack. Manual Windows builds without cgo remain a fallback path and should not be treated as identical to the published binaries. `go install` is smoke-tested in CI in the official Debian-based Go container image; `install.sh` is smoke-tested on Ubuntu, Debian, Arch, and NixOS-like Linux environments; `install/install.ps1` is smoke-tested on Windows `arm64` and `x86_64`.
 
 <AccordionGroup>
   <Accordion title="CLI stability">
