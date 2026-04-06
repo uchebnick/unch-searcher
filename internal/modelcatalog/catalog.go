@@ -106,7 +106,7 @@ func RecognizeInstallTargetForPath(modelPath string) (InstallTarget, bool) {
 
 func cloneInstallTarget(target InstallTarget) InstallTarget {
 	cloned := target
-	cloned.Metadata = target.Metadata.Clone()
+	cloned.Metadata = target.Clone()
 	return cloned
 }
 

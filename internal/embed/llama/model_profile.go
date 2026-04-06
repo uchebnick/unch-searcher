@@ -119,7 +119,7 @@ func behaviorForPath(modelPath string) embeddingBehavior {
 func profileForTarget(target modelcatalog.InstallTarget) ModelProfile {
 	defaults := runtimeDefaultsForTargetID(target.ID)
 	return ModelProfile{
-		Metadata:           target.Metadata.Clone(),
+		Metadata:           target.Clone(),
 		DefaultContextSize: defaults.DefaultContextSize,
 	}
 }
