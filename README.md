@@ -37,7 +37,14 @@ brew install uchebnick/tap/unch
 Release installer on macOS and Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/uchebnick/unch/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/uchebnick/unch/main/install.sh | sudo sh -s -- -b /usr/local/bin
+```
+
+This installs `unch` into a system `PATH` directory so you can run it immediately after the installer finishes.
+On Apple Silicon macOS, use `/opt/homebrew/bin` instead of `/usr/local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/uchebnick/unch/main/install.sh | sudo sh -s -- -b /opt/homebrew/bin
 ```
 
 PowerShell installer on Windows:
@@ -52,6 +59,8 @@ Source install:
 go install github.com/uchebnick/unch/cmd/unch@latest
 ```
 
+This install path requires a cgo-capable Go toolchain. It is smoke-tested in CI in the official Debian-based Go container image. If `@latest` still resolves to the older pre-rename release line, use a release archive or build from the current checkout until the next tagged release is published.
+
 If you want to build from the current checkout:
 
 ```bash
@@ -64,7 +73,7 @@ Published release archives:
 - Linux: `arm64`, `x86_64`
 - Windows: `arm64`, `x86_64` (`unch.exe`)
 
-On those targets, the installers use published release archives by default, so Go is not required. `install.sh` and `install/install.ps1` only fall back to `go install` when no matching archive is available. `install.sh` is smoke-tested in CI on Ubuntu, Debian, Arch, and NixOS-like environments; the PowerShell installer is smoke-tested on Windows `arm64` and `x86_64`.
+On those targets, the installers use published release archives by default, so Go is not required. `install.sh` and `install/install.ps1` only fall back to `go install` when no matching archive is available. `install.sh` is smoke-tested in CI on Ubuntu, Debian, Arch, and NixOS-like environments, including the default no-`-b` path selection flow; the PowerShell installer is smoke-tested on Windows `arm64` and `x86_64`.
 
 See [Compatibility](docs/compatibility.md) for the support matrix and upgrade rules, and [Benchmarks](docs/benchmarks.md) for the checked-in `smoke`, `ci`, and `default` suites.
 

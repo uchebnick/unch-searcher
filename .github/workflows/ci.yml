@@ -349,6 +349,11 @@ jobs:
           mkdir -p "${asset_dir}" "${RUNNER_TEMP}/build"
           CGO_ENABLED=1 go build -trimpath -o "${RUNNER_TEMP}/build/unch" ./cmd/unch
           tar -C "${RUNNER_TEMP}/build" -czf "${asset_dir}/${{ matrix.asset_name }}" unch
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${asset_dir}/${{ matrix.asset_name }}" > "${asset_dir}/checksums.txt"
+          else
+            shasum -a 256 "${asset_dir}/${{ matrix.asset_name }}" > "${asset_dir}/checksums.txt"
+          fi
 
       - name: Build local Windows release asset
         if: runner.os == 'Windows'
@@ -368,7 +373,10 @@ jobs:
           $assetDir = Join-Path $env:RUNNER_TEMP "release-assets"
           $buildDir = Join-Path $env:RUNNER_TEMP "build"
           New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
-          Compress-Archive -Path (Join-Path $buildDir "unch.exe") -DestinationPath (Join-Path $assetDir "${{ matrix.asset_name }}") -Force
+          $assetPath = Join-Path $assetDir "${{ matrix.asset_name }}"
+          Compress-Archive -Path (Join-Path $buildDir "unch.exe") -DestinationPath $assetPath -Force
+          $hash = (Get-FileHash -Path $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $assetPath" | Set-Content -Path (Join-Path $assetDir "checksums.txt") -NoNewline
 
       - name: Install from local asset with shell installer
         if: runner.os != 'Windows'
@@ -381,6 +389,38 @@ jobs:
           ./install.sh -b "${bin_dir}" -v vci-test
           "${bin_dir}/unch" --help >/dev/null
 
+      - name: Reject local asset with wrong shell checksum
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          src_dir="${RUNNER_TEMP}/release-assets"
+          bad_dir="${RUNNER_TEMP}/release-assets-bad"
+          mkdir -p "${bad_dir}"
+          cp "${src_dir}/${{ matrix.asset_name }}" "${bad_dir}/${{ matrix.asset_name }}"
+          printf '0000000000000000000000000000000000000000000000000000000000000000  %s\n' "${{ matrix.asset_name }}" > "${bad_dir}/checksums.txt"
+          set +e
+          output="$(UNCH_INSTALL_ASSET_DIR="${bad_dir}" ./install.sh -b "${RUNNER_TEMP}/unch-bin-bad" -v vci-test 2>&1)"
+          status=$?
+          set -e
+          [ "$status" -ne 0 ]
+          printf '%s\n' "$output" | grep -F "SHA-256 mismatch" >/dev/null
+
+      - name: Install from local asset with default shell installer path
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          UNCH_INSTALL_ASSET_DIR: ${{ runner.temp }}/release-assets
+        run: |
+          set -euo pipefail
+          bin_dir="${HOME}/.unch-install-bin-smoke"
+          mkdir -p "${bin_dir}"
+          export PATH="${bin_dir}:$PATH"
+          rm -f "${bin_dir}/unch"
+          ./install.sh -v vci-test
+          command -v unch >/dev/null
+          unch --help >/dev/null
+
       - name: Install from local asset with PowerShell installer
         if: runner.os == 'Windows'
         shell: pwsh
@@ -390,6 +430,29 @@ jobs:
           $binDir = Join-Path $env:RUNNER_TEMP "unch-bin"
           .\install\install.ps1 -BinDir $binDir -Version vci-test
           & (Join-Path $binDir "unch.exe") --help | Out-Null
+
+      - name: Reject local asset with wrong PowerShell checksum
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $srcDir = Join-Path $env:RUNNER_TEMP "release-assets"
+          $badDir = Join-Path $env:RUNNER_TEMP "release-assets-bad"
+          $output = @()
+          New-Item -ItemType Directory -Force -Path $badDir | Out-Null
+          Copy-Item -Path (Join-Path $srcDir "${{ matrix.asset_name }}") -Destination (Join-Path $badDir "${{ matrix.asset_name }}") -Force
+          "0000000000000000000000000000000000000000000000000000000000000000  ${{ matrix.asset_name }}" | Set-Content -Path (Join-Path $badDir "checksums.txt") -NoNewline
+          $env:UNCH_INSTALL_ASSET_DIR = $badDir
+          try {
+            .\install\install.ps1 -BinDir (Join-Path $env:RUNNER_TEMP "unch-bin-bad") -Version vci-test *>&1 | Tee-Object -Variable output | Out-Null
+            throw "expected checksum failure"
+          } catch {
+            $text = ($output | Out-String) + $_.ToString()
+            if ($text -notmatch "SHA-256 mismatch") {
+              throw
+            }
+          } finally {
+            Remove-Item Env:UNCH_INSTALL_ASSET_DIR -ErrorAction SilentlyContinue
+          }
 
   install-smoke-linux-distros:
     name: install-smoke-linux (${{ matrix.label }})
@@ -432,6 +495,7 @@ jobs:
           mkdir -p "${asset_dir}" "${RUNNER_TEMP}/build"
           CGO_ENABLED=1 go build -trimpath -o "${RUNNER_TEMP}/build/unch" ./cmd/unch
           tar -C "${RUNNER_TEMP}/build" -czf "${asset_dir}/unch_Linux_x86_64.tar.gz" unch
+          sha256sum "${asset_dir}/unch_Linux_x86_64.tar.gz" > "${asset_dir}/checksums.txt"
 
       - name: Install from local asset inside ${{ matrix.label }} container
         shell: bash
@@ -447,6 +511,26 @@ jobs:
               export UNCH_INSTALL_ASSET_DIR=/assets
               ./install.sh -b /tmp/bin -v vci-test
               /tmp/bin/unch --help >/dev/null
+            '
+
+      - name: Install from local asset with default shell path inside ${{ matrix.label }} container
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/src" \
+            -v "${RUNNER_TEMP}/release-assets:/assets" \
+            -w /src \
+            "${{ matrix.image }}" sh -lc '
+              set -eu
+              '"${{ matrix.prepare }}"'
+              export UNCH_INSTALL_ASSET_DIR=/assets
+              mkdir -p "$HOME/.unch-install-bin-smoke"
+              export PATH="$HOME/.unch-install-bin-smoke:$PATH"
+              rm -f "$HOME/.unch-install-bin-smoke/unch"
+              ./install.sh -v vci-test
+              command -v unch >/dev/null
+              unch --help >/dev/null
             '
 
   install-smoke-nix:
@@ -470,6 +554,7 @@ jobs:
           mkdir -p "${asset_dir}" "${RUNNER_TEMP}/build"
           CGO_ENABLED=1 go build -trimpath -o "${RUNNER_TEMP}/build/unch" ./cmd/unch
           tar -C "${RUNNER_TEMP}/build" -czf "${asset_dir}/unch_Linux_x86_64.tar.gz" unch
+          sha256sum "${asset_dir}/unch_Linux_x86_64.tar.gz" > "${asset_dir}/checksums.txt"
 
       - name: Install from local asset inside nix container
         shell: bash

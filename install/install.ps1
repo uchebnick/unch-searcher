@@ -55,8 +55,69 @@ function Resolve-AssetArchive {
 
     $url = "https://github.com/$Repo/releases/download/$ResolvedVersion/$AssetName"
     Write-Note "Downloading $url"
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $DestinationPath
+    } catch {
+        return $null
+    }
+    return $DestinationPath
+}
+
+function Resolve-ChecksumsFile {
+    param(
+        [string]$ResolvedVersion,
+        [string]$DestinationPath
+    )
+
+    $assetDir = $env:UNCH_INSTALL_ASSET_DIR
+    if (-not [string]::IsNullOrWhiteSpace($assetDir)) {
+        $localChecksums = Join-Path $assetDir "checksums.txt"
+        if (Test-Path $localChecksums) {
+            return $localChecksums
+        }
+        throw "Missing checksums.txt in $assetDir"
+    }
+
+    $url = "https://github.com/$Repo/releases/download/$ResolvedVersion/checksums.txt"
+    Write-Note "Downloading $url"
     Invoke-WebRequest -Uri $url -OutFile $DestinationPath
     return $DestinationPath
+}
+
+function Find-ExpectedChecksum {
+    param(
+        [string]$ChecksumsPath,
+        [string]$AssetName
+    )
+
+    foreach ($line in Get-Content -Path $ChecksumsPath) {
+        if ($line -match '^\s*([0-9a-fA-F]+)\s+\*?(.+?)\s*$') {
+            $fileName = [System.IO.Path]::GetFileName($Matches[2])
+            if ($fileName -eq $AssetName) {
+                return $Matches[1].ToLowerInvariant()
+            }
+        }
+    }
+
+    return $null
+}
+
+function Verify-AssetChecksum {
+    param(
+        [string]$AssetPath,
+        [string]$AssetName,
+        [string]$ChecksumsPath
+    )
+
+    $expected = Find-ExpectedChecksum -ChecksumsPath $ChecksumsPath -AssetName $AssetName
+    if ([string]::IsNullOrWhiteSpace($expected)) {
+        throw "Could not find a SHA-256 checksum for $AssetName in $ChecksumsPath"
+    }
+
+    $actual = (Get-FileHash -Path $AssetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $expected) {
+        throw "SHA-256 mismatch for $AssetName. Expected: $expected Actual: $actual"
+    }
 }
 
 function Detect-Arch {
@@ -79,17 +140,27 @@ function Install-ReleaseArchive {
     )
 
     $arch = Detect-Arch
+    if ($arch -eq "unknown") {
+        return [pscustomobject]@{ Success = $false; Fatal = $false }
+    }
+
     $asset = "unch_Windows_${arch}.zip"
     $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
     New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
     try {
         $archive = Resolve-AssetArchive -ResolvedVersion $ResolvedVersion -AssetName $asset -DestinationPath (Join-Path $tmpDir $asset)
+        if (-not $archive) {
+            return [pscustomobject]@{ Success = $false; Fatal = $false }
+        }
+        $checksums = Resolve-ChecksumsFile -ResolvedVersion $ResolvedVersion -DestinationPath (Join-Path $tmpDir "checksums.txt")
+        Verify-AssetChecksum -AssetPath $archive -AssetName $asset -ChecksumsPath $checksums
         Expand-Archive -Path $archive -DestinationPath $tmpDir -Force
         New-Item -ItemType Directory -Force -Path $Destination | Out-Null
         Copy-Item -Path (Join-Path $tmpDir "unch.exe") -Destination (Join-Path $Destination "unch.exe") -Force
-        return $true
+        return [pscustomobject]@{ Success = $true; Fatal = $false }
     } catch {
-        return $false
+        Write-Error $_
+        return [pscustomobject]@{ Success = $false; Fatal = $true }
     } finally {
         Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
     }
@@ -127,7 +198,11 @@ if ($resolvedVersion -eq "latest") {
 $installed = $false
 
 if ($resolvedVersion -ne "latest" -or -not [string]::IsNullOrWhiteSpace($env:UNCH_INSTALL_ASSET_DIR)) {
-    $installed = Install-ReleaseArchive -ResolvedVersion $resolvedVersion -Destination $BinDir
+    $archiveInstall = Install-ReleaseArchive -ResolvedVersion $resolvedVersion -Destination $BinDir
+    $installed = $archiveInstall.Success
+    if (-not $installed -and $archiveInstall.Fatal) {
+        throw "Release archive install failed verification or extraction; refusing to continue."
+    }
 }
 
 if (-not $installed) {
@@ -140,5 +215,7 @@ if (-not $installed) {
 
 Write-Note "Installed unch to $(Join-Path $BinDir 'unch.exe')"
 if (-not ($env:Path -split ';' | Where-Object { $_ -eq $BinDir })) {
-    Write-Note "Note: $BinDir is not currently on PATH."
+    $env:Path = "$BinDir;$env:Path"
+    Write-Note "Added $BinDir to PATH for the current PowerShell session."
+    Write-Note "If you want to keep it available in future sessions, add $BinDir to your user PATH."
 }
