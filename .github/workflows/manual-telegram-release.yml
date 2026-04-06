@@ -1,0 +1,75 @@
+name: manual-telegram-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to announce
+        required: true
+        type: string
+      release_url:
+        description: Published GitHub release URL
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  notify:
+    name: notify-telegram
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Render release announcement
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python3 scripts/render_release_announcement.py \
+            --tag "${{ inputs.tag }}" \
+            --url "${{ inputs.release_url }}" \
+            --notes-file ".github/releases/${{ inputs.tag }}.md" \
+            > dist/release-announcement.txt
+
+      - name: Send Telegram release notification
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets are not set; skipping notification"
+            exit 0
+          fi
+          telegram_api="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
+          response_file="$(mktemp)"
+          status="$(curl --silent --show-error \
+            --output "${response_file}" \
+            --write-out "%{http_code}" \
+            -X POST "${telegram_api}/getChat" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}")"
+          if [ "${status}" != "200" ]; then
+            cat "${response_file}" >&2
+            rm -f "${response_file}"
+            echo "Telegram chat lookup failed for the configured chat target" >&2
+            exit 1
+          fi
+          rm -f "${response_file}"
+
+          response_file="$(mktemp)"
+          status="$(curl --silent --show-error \
+            --output "${response_file}" \
+            --write-out "%{http_code}" \
+            -X POST "${telegram_api}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@dist/release-announcement.txt" \
+            --data-urlencode "disable_web_page_preview=true")"
+          if [ "${status}" != "200" ]; then
+            cat "${response_file}" >&2
+            rm -f "${response_file}"
+            exit 1
+          fi
+          cat "${response_file}"
+          rm -f "${response_file}"
