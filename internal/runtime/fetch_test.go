@@ -54,6 +54,42 @@ func TestExtractTarGzRejectsOverwriteThroughSymlink(t *testing.T) {
 	}
 }
 
+func TestExtractTarGzMaterializesSymlinkChain(t *testing.T) {
+	if stdruntime.GOOS == "windows" {
+		t.Skip("symlink extraction tests are unreliable on Windows CI")
+	}
+
+	destDir := t.TempDir()
+	archivePath := filepath.Join(t.TempDir(), "payload.tar.gz")
+	writeTarGz(t, archivePath,
+		tarEntry{name: "bundle/libggml.dylib", linkname: "libggml.0.dylib", typ: tar.TypeSymlink, mode: 0o777},
+		tarEntry{name: "bundle/libggml.0.dylib", linkname: "libggml.0.9.8.dylib", typ: tar.TypeSymlink, mode: 0o777},
+		tarEntry{name: "bundle/libggml.0.9.8.dylib", body: []byte("payload"), typ: tar.TypeReg, mode: 0o755},
+	)
+
+	if err := extractTarGz(archivePath, destDir); err != nil {
+		t.Fatalf("extractTarGz() error = %v", err)
+	}
+
+	for _, name := range []string{"libggml.dylib", "libggml.0.dylib", "libggml.0.9.8.dylib"} {
+		path := filepath.Join(destDir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s) error = %v", path, err)
+		}
+		if got := string(data); got != "payload" {
+			t.Fatalf("ReadFile(%s) = %q, want %q", path, got, "payload")
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("Lstat(%s) error = %v", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			t.Fatalf("%s should be materialized as a regular file", path)
+		}
+	}
+}
+
 type tarEntry struct {
 	name     string
 	body     []byte

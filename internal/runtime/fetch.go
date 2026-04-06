@@ -636,15 +636,28 @@ func archivePathHasParentRef(name string) bool {
 }
 
 func materializeArchiveLinks(root string, links []archiveLink) error {
+	linkIndex := make(map[string]archiveLink, len(links))
 	for _, link := range links {
-		if err := materializeArchiveLink(root, link); err != nil {
+		if !pathWithinRoot(root, link.linkPath) {
+			return fmt.Errorf("archive link destination %s escapes destination", link.linkPath)
+		}
+		if _, exists := linkIndex[link.linkPath]; exists {
+			return fmt.Errorf("duplicate archive link destination %s", link.linkPath)
+		}
+		linkIndex[link.linkPath] = link
+	}
+
+	resolvedTargets := make(map[string]string, len(links))
+	resolving := make(map[string]bool, len(links))
+	for _, link := range links {
+		if err := materializeArchiveLink(root, link, linkIndex, resolvedTargets, resolving); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func materializeArchiveLink(root string, link archiveLink) error {
+func materializeArchiveLink(root string, link archiveLink, linkIndex map[string]archiveLink, resolvedTargets map[string]string, resolving map[string]bool) error {
 	parentDir, err := filepath.EvalSymlinks(filepath.Dir(link.linkPath))
 	if err != nil {
 		return fmt.Errorf("resolve archive link parent: %w", err)
@@ -658,7 +671,7 @@ func materializeArchiveLink(root string, link archiveLink) error {
 		return fmt.Errorf("stat archive link destination %s: %w", link.linkPath, err)
 	}
 
-	resolvedTarget, err := resolvedArchiveLinkTarget(parentDir, root, link.targetPath)
+	resolvedTarget, err := resolvedArchiveLinkTarget(parentDir, root, link, linkIndex, resolvedTargets, resolving)
 	if err != nil {
 		return err
 	}
@@ -677,7 +690,54 @@ func materializeArchiveLink(root string, link archiveLink) error {
 	return nil
 }
 
-func resolvedArchiveLinkTarget(parentDir, root, rawTarget string) (string, error) {
+func resolvedArchiveLinkTarget(parentDir, root string, link archiveLink, linkIndex map[string]archiveLink, resolvedTargets map[string]string, resolving map[string]bool) (string, error) {
+	if resolved, ok := resolvedTargets[link.linkPath]; ok {
+		return resolved, nil
+	}
+	if resolving[link.linkPath] {
+		return "", fmt.Errorf("archive link cycle detected at %s", link.linkPath)
+	}
+	resolving[link.linkPath] = true
+	defer delete(resolving, link.linkPath)
+
+	candidateTarget, err := archiveLinkCandidateTarget(parentDir, root, link.targetPath)
+	if err != nil {
+		return "", err
+	}
+
+	if nextLink, ok := linkIndex[candidateTarget]; ok {
+		nextParentDir, err := filepath.EvalSymlinks(filepath.Dir(nextLink.linkPath))
+		if err != nil {
+			return "", fmt.Errorf("resolve archive link parent: %w", err)
+		}
+		if !pathWithinRoot(root, nextParentDir) {
+			return "", fmt.Errorf("archive link parent escapes destination")
+		}
+
+		resolved, err := resolvedArchiveLinkTarget(nextParentDir, root, nextLink, linkIndex, resolvedTargets, resolving)
+		if err != nil {
+			return "", err
+		}
+		resolvedTargets[link.linkPath] = resolved
+		return resolved, nil
+	}
+
+	info, err := os.Stat(candidateTarget)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("archive link target %q not found", link.targetPath)
+		}
+		return "", fmt.Errorf("stat archive link target %s: %w", candidateTarget, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("archive link target %s is a directory", candidateTarget)
+	}
+
+	resolvedTargets[link.linkPath] = candidateTarget
+	return candidateTarget, nil
+}
+
+func archiveLinkCandidateTarget(parentDir, root, rawTarget string) (string, error) {
 	linkTarget := filepath.Clean(filepath.FromSlash(strings.TrimSpace(rawTarget)))
 	if linkTarget == "." || linkTarget == "" || filepath.IsAbs(linkTarget) {
 		return "", fmt.Errorf("invalid archive link target %q", rawTarget)
@@ -687,15 +747,7 @@ func resolvedArchiveLinkTarget(parentDir, root, rawTarget string) (string, error
 	if !pathWithinRoot(root, candidateTarget) {
 		return "", fmt.Errorf("archive link target %q escapes destination", rawTarget)
 	}
-
-	resolvedTarget, err := filepath.EvalSymlinks(candidateTarget)
-	if err != nil {
-		return "", fmt.Errorf("resolve archive link target %q: %w", rawTarget, err)
-	}
-	if !pathWithinRoot(root, resolvedTarget) {
-		return "", fmt.Errorf("archive link target %q escapes destination", rawTarget)
-	}
-	return resolvedTarget, nil
+	return candidateTarget, nil
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {
