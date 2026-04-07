@@ -10,6 +10,9 @@ The runner answers three practical questions:
 
 It measures real `unch index` and `unch search` subprocesses, not internal Go APIs.
 
+Today the checked-in adapters, suites, and release workflows benchmark `unch` only.
+The report format is generic enough to support future adapters, but the current benchmark story should be read as `unch` regression and quality tracking, not as a published cross-tool shootout.
+
 ## Benchmark Suites
 
 The checked-in suites now have explicit identity and version fields:
@@ -44,7 +47,7 @@ File: [`benchmarks/suites/default.json`](../benchmarks/suites/default.json)
 - `suite_id`: `default`
 - `suite_version`: `3`
 - size: `161` queries across `8` pinned repositories
-- purpose: broader tool-to-tool comparisons and quality tracking
+- purpose: broader `unch` regression and quality tracking across pinned repositories
 
 ## Quick Start
 
@@ -129,7 +132,7 @@ The runner records:
 `warm search`
 
 - repeated searches against an already-built local index
-- averaged per query and then per repository / per tool
+- averaged per query and then per repository / per benchmark run
 
 ## Quality Scoring
 
@@ -225,7 +228,7 @@ Interpretation:
 - `top1` shows how often the first answer is exactly right
 - `top3` shows whether the right answer still stays near the top
 - `mrr` punishes rank drift
-- `quality score` is the compact comparison number, but it should always be read together with the raw metrics
+- `quality score` is the compact summary number for comparing `unch` runs, but it should always be read together with the raw metrics
 - `suite coverage` and `run profile` make it explicit how broad the run was and how many repeats were used
 - `latest index snapshot` per repo tells you roughly how much code was indexed in the most recent successful run
 - `top1 misses` and the GitHub summary's `slowest queries` section make it easier to see whether regressions came from ranking drift, latency spikes, or both
@@ -252,7 +255,7 @@ The report contains:
 - per-repository query count, mode mix, and latest indexed symbol/file counts
 - per-query hits, top hit, observed rank, and mean search timing
 
-That JSON is the source of truth for comparisons.
+That JSON is the source of truth for comparing `unch` runs produced from the same suite definition.
 
 ## Governance
 
