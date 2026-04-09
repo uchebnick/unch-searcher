@@ -44,7 +44,7 @@ jobs:
             msys_pkg: mingw-w64-clang-aarch64-clang
             cc: clang
             msys_release: true
-            msys_update: false
+            msys_update: true
             msys_cache: false
 
     env:
@@ -235,7 +235,7 @@ jobs:
             msys_pkg: mingw-w64-clang-aarch64-clang
             cc: clang
             msys_release: true
-            msys_update: false
+            msys_update: true
             msys_cache: false
 
     steps:
@@ -317,7 +317,7 @@ jobs:
             msys_pkg: mingw-w64-clang-aarch64-clang
             cc: clang
             msys_release: true
-            msys_update: false
+            msys_update: true
             msys_cache: false
 
     steps:
