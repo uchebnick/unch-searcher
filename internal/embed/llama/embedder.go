@@ -27,12 +27,13 @@ type Config struct {
 }
 
 type Embedder struct {
-	mu      sync.Mutex
-	model   llama.Model
-	ctx     llama.Context
-	vocab   llama.Vocab
-	dim     int
-	profile embeddingBehavior
+	mu          sync.Mutex
+	model       llama.Model
+	ctx         llama.Context
+	vocab       llama.Vocab
+	dim         int
+	profile     embeddingBehavior
+	contextSize int
 }
 
 var (
@@ -115,7 +116,6 @@ func New(cfg Config) (*Embedder, error) {
 
 	ctxParams := llama.ContextDefaultParams()
 	ctxParams.NCtx = uint32(cfg.ContextSize)
-	ctxParams.NBatch = uint32(cfg.ContextSize)
 	ctxParams.PoolingType = cfg.Pooling
 	ctxParams.Embeddings = 1
 
@@ -130,11 +130,12 @@ func New(cfg Config) (*Embedder, error) {
 	}
 
 	return &Embedder{
-		model:   model,
-		ctx:     ctx,
-		vocab:   llama.ModelGetVocab(model),
-		dim:     int(llama.ModelNEmbd(model)),
-		profile: profile,
+		model:       model,
+		ctx:         ctx,
+		vocab:       llama.ModelGetVocab(model),
+		dim:         int(llama.ModelNEmbd(model)),
+		profile:     profile,
+		contextSize: cfg.ContextSize,
 	}, nil
 }
 
@@ -201,6 +202,10 @@ func (e *Embedder) Embed(text string) ([]float32, error) {
 		return nil, fmt.Errorf("tokenize returned zero tokens")
 	}
 
+	if len(tokens) > e.contextSize {
+		tokens = tokens[:e.contextSize]
+	}
+
 	batch := llama.BatchGetOne(tokens)
 
 	ret, err := llama.Decode(e.ctx, batch)
@@ -264,6 +269,8 @@ func indexedSymbolDocument(profile embeddingBehavior, path string, symbol indexi
 }
 
 func normalizeText(s string) string {
+	s = strings.ToValidUTF8(s, "")
+	s = strings.ReplaceAll(s, "\x00", "")
 	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
