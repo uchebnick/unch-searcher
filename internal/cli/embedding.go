@@ -55,7 +55,12 @@ func prepareEmbedder(
 		apiKey, err := semsearch.ResolveProviderToken(targetPaths.LocalDir, provider.String())
 		if err != nil {
 			if s != nil {
-				printSessionLine(s, "Warning: OpenRouter token is not configured. Run `unch auth openrouter --token <token>` or set OPENROUTER_API_KEY.")
+				envName := strings.TrimSpace(providerTokenEnvName(provider.String()))
+				if envName == "" {
+					printSessionLine(s, "Warning: token for provider %q is not configured. Run `unch auth %s --token <token>`.", provider, provider)
+				} else {
+					printSessionLine(s, "Warning: token for provider %q is not configured. Run `unch auth %s --token <token>` or set %s.", provider, provider, envName)
+				}
 			}
 			return preparedEmbedder{}, fmt.Errorf("resolve openrouter token: %w", err)
 		}
@@ -136,5 +141,14 @@ func prepareEmbedder(
 		}, nil
 	default:
 		return preparedEmbedder{}, fmt.Errorf("unsupported embedding provider %q", provider)
+	}
+}
+
+func providerTokenEnvName(provider string) string {
+	switch strings.TrimSpace(strings.ToLower(provider)) {
+	case "openrouter":
+		return "OPENROUTER_API_KEY"
+	default:
+		return ""
 	}
 }

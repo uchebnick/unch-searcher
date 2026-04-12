@@ -13,11 +13,11 @@ func LocalTokensPath(localDir string) string {
 }
 
 func GlobalTokensPath() (string, error) {
-	globalDir, err := globalSemsearchDir()
+	configDir, err := globalConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(globalDir, "tokens.json"), nil
+	return filepath.Join(configDir, "tokens.json"), nil
 }
 
 func ResolveProviderToken(localDir string, provider string) (string, error) {
@@ -116,4 +116,22 @@ func providerTokenEnv(provider string) string {
 	default:
 		return ""
 	}
+}
+
+func globalConfigDir() (string, error) {
+	if custom := strings.TrimSpace(os.Getenv("UNCH_CONFIG_HOME")); custom != "" {
+		return filepath.Abs(custom)
+	}
+
+	configDir, err := os.UserConfigDir()
+	if err == nil && strings.TrimSpace(configDir) != "" {
+		return filepath.Join(configDir, "unch"), nil
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(homeDir) == "" {
+		return "", fmt.Errorf("resolve global config dir: %w", err)
+	}
+
+	return filepath.Join(homeDir, ".config", "unch"), nil
 }
