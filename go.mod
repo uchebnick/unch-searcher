@@ -21,5 +21,6 @@ require (
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/tetratelabs/wazero v1.7.3 // indirect
+	github.com/tree-sitter/tree-sitter-rust v0.24.2 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 )
