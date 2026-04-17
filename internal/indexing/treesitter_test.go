@@ -118,6 +118,58 @@ def add(a, b):
 	}
 }
 
+func TestExtractSymbolsForPathRust(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "sample.rs")
+	source := `/// Store docs.
+pub trait Store {
+    /// Get docs.
+    fn get(&self, id: &str) -> String;
+}
+
+/// PgStore docs.
+pub struct PgStore {
+    pool: usize,
+}
+
+impl PgStore {
+    /// Delete docs.
+    pub fn delete(&self, id: &str) {}
+}
+
+pub fn parse(value: &str) -> &str {
+    value
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatalf("write sample: %v", err)
+	}
+
+	symbols, err := extractSymbolsForPath(path, "@search:", "@filectx:")
+	if err != nil {
+		t.Fatalf("extractSymbolsForPath() error: %v", err)
+	}
+	if len(symbols) != 5 {
+		t.Fatalf("expected 5 symbols, got %d: %+v", len(symbols), symbols)
+	}
+	if symbols[0].QualifiedName != "Store" || symbols[0].Kind != "interface" || symbols[0].Documentation != "Store docs." {
+		t.Fatalf("unexpected trait symbol %+v", symbols[0])
+	}
+	if symbols[1].QualifiedName != "Store.get" || symbols[1].Kind != "method" || symbols[1].Documentation != "Get docs." {
+		t.Fatalf("unexpected trait method symbol %+v", symbols[1])
+	}
+	if symbols[2].QualifiedName != "PgStore" || symbols[2].Kind != "struct" || symbols[2].Documentation != "PgStore docs." {
+		t.Fatalf("unexpected struct symbol %+v", symbols[2])
+	}
+	if symbols[3].QualifiedName != "PgStore.delete" || symbols[3].Kind != "method" || symbols[3].Documentation != "Delete docs." {
+		t.Fatalf("unexpected impl method symbol %+v", symbols[3])
+	}
+	if symbols[4].QualifiedName != "parse" || symbols[4].Kind != "function" {
+		t.Fatalf("unexpected function symbol %+v", symbols[4])
+	}
+}
+
 func TestExtractSymbolsForPathFallsBackToLegacyOnUnsupportedExtension(t *testing.T) {
 	t.Parallel()
 
